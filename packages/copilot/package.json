@@ -1,0 +1,195 @@
+{
+  "name": "workbuddy-anywhere-for-copilot",
+  "displayName": "WorkBuddy Anywhere for Copilot",
+  "description": "WorkBuddy Anywhere for Copilot: use WorkBuddy models in VS Code Chat, with hosted multi-account support and a management page shared with the desktop app",
+  "version": "0.6.6",
+  "publisher": "codebuddy-chat",
+  "icon": "icon.png",
+  "engines": {
+    "vscode": "^1.103.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "icons": {
+      "codebuddy-icon": {
+        "description": "WorkBuddy Anywhere brand icon",
+        "default": {
+          "fontPath": "media/codebuddy-icon.ttf",
+          "fontCharacter": "\\E629"
+        }
+      }
+    },
+    "languageModelChatProviders": [
+      {
+        "vendor": "codebuddy",
+        "displayName": "CodeBuddy",
+        "managementCommand": "codebuddy.manageProvider"
+      },
+      {
+        "vendor": "codebuddy-intl",
+        "displayName": "CodeBuddy Global",
+        "managementCommand": "codebuddy-intl.manageProvider"
+      }
+    ],
+    "commands": [
+      {
+        "command": "codebuddy.manageProvider",
+        "title": "WorkBuddy Anywhere: Manage Account",
+        "description": "Accounts, quota, packages, check-in, models and settings. Also what the status bar opens."
+      },
+      {
+        "command": "codebuddy-intl.manageProvider",
+        "title": "WorkBuddy Anywhere: Manage Account (Global)",
+        "description": "The same management page, opened on the international cluster."
+      },
+      {
+        "command": "codebuddy.menu",
+        "title": "WorkBuddy Anywhere: Menu",
+        "description": "Alias for the management page, kept so existing keybindings keep working."
+      },
+      {
+        "command": "codebuddy.login",
+        "title": "WorkBuddy Anywhere: Add Account (Scan QR)"
+      },
+      {
+        "command": "codebuddy.logout",
+        "title": "WorkBuddy Anywhere: Sign Out",
+        "description": "Opens the management page, where every account is listed with its quota."
+      },
+      {
+        "command": "codebuddy.showUsage",
+        "title": "WorkBuddy Anywhere: Show Usage & Packages"
+      },
+      {
+        "command": "codebuddy.settings",
+        "title": "WorkBuddy Anywhere: Settings"
+      },
+      {
+        "command": "codebuddy.refreshModels",
+        "title": "WorkBuddy Anywhere: Refresh Model List"
+      },
+      {
+        "command": "codebuddy.toggleProvider",
+        "title": "WorkBuddy Anywhere: Enable/Disable Model Group"
+      },
+      {
+        "command": "codebuddy.selectVisionFallback",
+        "title": "WorkBuddy Anywhere: Select Vision Fallback Model",
+        "description": "Opens the management page's Settings tab, where every chat model registered in VS Code's LM namespace is selectable."
+      }
+    ],
+    "configuration": {
+      "title": "WorkBuddy Anywhere",
+      "properties": {
+        "codebuddy.thinkingEffort": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "low",
+            "medium",
+            "high",
+            "off"
+          ],
+          "enumDescriptions": [
+            "Auto: per-model default (deepseek/hy=high, glm/qwen/gpt=medium, kimi=low)",
+            "Low: minimal thinking",
+            "Medium: balanced thinking",
+            "High: deep thinking (slower, more tokens)",
+            "Off: disable thinking/reasoning entirely"
+          ],
+          "description": "Thinking/reasoning depth for models that support it"
+        },
+        "codebuddy.visionFallbackModel": {
+          "type": "string",
+          "default": "",
+          "description": "Model used to describe images when the selected chat model doesn't accept images. Format: \"vendor/model\" for a VS Code LM model (e.g. \"copilot/gpt-4o\"). Empty = auto (VS Code models are tried first, then the model catalog). Edit it from the management page's Settings tab."
+        },
+        "codebuddy.customModels": {
+          "type": "array",
+          "default": [],
+          "description": "Custom model IDs to add beyond the server list",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "displayName": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "codebuddy.modelAllowlist": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Model ids forced INTO the model list even though the catalog's curation leaves them out (whitelist). Edited by switching a greyed model on in the management page's Models tab."
+        },
+        "codebuddy.modelBlocklist": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Model ids forced OUT of the model list (blacklist). Applied last, so it also beats custom models and the whitelist. Edited by switching a model off in the management page's Models tab."
+        },
+        "codebuddy.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Offer the CodeBuddy model group to VS Code's model picker"
+        },
+        "codebuddy.autoSelectAccount": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allocate accounts automatically per request: prefer credits that expire soonest, keep one account per conversation for ~30 minutes of activity. An explicit account choice still wins."
+        },
+        "codebuddy.region": {
+          "type": "string",
+          "enum": [
+            "cn",
+            "intl"
+          ],
+          "default": "cn",
+          "description": "Which cluster the management page opens on. Each region has its own sign-in, account and quota; switching here does not move accounts or spend the other cluster's credits."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./ --noEmit && node esbuild.mjs",
+    "bundle": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc -p ./ --noEmit",
+    "lint": "eslint src --ext ts",
+    "package": "yarn compile && vsce package --no-dependencies --allow-missing-repository --allow-star-activation"
+  },
+  "dependencies": {
+    "@wbaw/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.103.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "esbuild": "^0.25.0",
+    "eslint": "^8.57.0",
+    "typescript": "^5.4.0",
+    "vsce": "^2.15.0"
+  },
+  "__metadata": {
+    "installedTimestamp": 1788493584736,
+    "targetPlatform": "undefined",
+    "size": 334928
+  }
+}

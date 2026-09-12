@@ -1,0 +1,37 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build:core",
+      "type": "shell",
+      "command": "yarn workspace @wbaw/core build",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent", "panel": "shared" }
+    },
+    {
+      "label": "build:copilot",
+      "type": "shell",
+      "command": "yarn workspace workbuddy-anywhere-for-copilot bundle",
+      "options": { "cwd": "${workspaceFolder}" },
+      "dependsOn": "build:core",
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent", "panel": "shared" }
+    },
+    {
+      "label": "check:copilot",
+      "type": "shell",
+      "command": "yarn workspace workbuddy-anywhere-for-copilot typecheck && node packages/copilot/scripts/smoke-extension.cjs",
+      "options": { "cwd": "${workspaceFolder}" },
+      "dependsOn": "build:copilot",
+      "problemMatcher": []
+    },
+    {
+      "label": "test:core",
+      "type": "shell",
+      "command": "yarn test",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+ui-dist/
+media/ui-dist/
+*.vsix
+# electron-builder outputs (per-platform installers)
+packages/desktop/dist/
+packages/desktop/win-unpacked/
+# stray esbuild artifact from a wrong-output build
+packages/desktop/main.js
+
+# Yarn
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# macOS
+.DS_Store

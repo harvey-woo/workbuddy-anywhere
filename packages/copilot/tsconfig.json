@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "module": "Node16",
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    // esbuild emits the bundle (see esbuild.mjs); tsc is the type checker only.
+    // Emitting here as well would fight over out/extension.js — and the raw tsc
+    // output would require("@wbaw/core"), a bare specifier that does
+    // not survive vsce packaging.
+    "noEmit": true,
+    "sourceMap": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "Node16",
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "out"]
+}

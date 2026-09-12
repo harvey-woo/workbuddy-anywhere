@@ -1,0 +1,263 @@
+import * as path from "node:path";
+import { Menu, Tray, app, nativeImage } from "electron";
+import type {
+  AccountSummary,
+  ServiceState,
+  WorkbuddyService,
+} from "@wbaw/core";
+
+/** The tabs a tray action can ask the window to show. */
+export type TrayRoute = "accounts" | "login";
+
+export interface TrayActions {
+  open(route: TrayRoute): void;
+  quit(): void;
+}
+
+/**
+ * Create the tray, which is this app's real home: the window is something you
+ * open, closing it hides it, and the background token refresh has to keep
+ * running either way.
+ *
+ * The title mirrors the VS Code status bar — just the ACTIVE account's
+ * percentage — so the number people already recognise is in the same place.
+ * The menu carries what that status bar deliberately does not: per-account
+ * switching, check-in and the startup toggle.
+ */
+export function createTray(
+  service: WorkbuddyService,
+  actions: TrayActions
+): Tray {
+  const tray = new Tray(trayIcon());
+  tray.setToolTip("WorkBuddy Anywhere");
+
+  const refresh = async (): Promise<void> => {
+    let state: ServiceState;
+    try {
+      state = await service.getState();
+    } catch (err) {
+      // Keep the last title and menu rather than blanking a working tray.
+      console.error(`[tray] state read failed: ${messageOf(err)}`);
+      return;
+    }
+    const active =
+      state.accounts.find((account) => account.key === state.activeKey) ??
+      state.accounts[0];
+
+    // AUTO MODE: requests rotate across accounts, so the title shows the
+    // REGION TOTAL — one account's balance would mislead.
+    const auto = state.settings.autoSelectAccount;
+    if (auto) {
+      const totals = regionTotals(state.accounts, state.region);
+      if (totals) {
+        tray.setTitle(` ${compactCredits(totals.remain)}`);
+        tray.setContextMenu(buildAutoMenu(service, state, totals, actions, refresh));
+        return;
+      }
+    }
+
+    // macOS draws the title flush against the image, so the gap is made here:
+    // a leading space, rather than padding baked into the icon (which would
+    // eat into the 18pt menu-bar height).
+    tray.setTitle(active?.usage ? ` ${compactCredits(active.usage.remain)}` : "");
+    tray.setContextMenu(buildMenu(service, state, active, actions, refresh));
+  };
+
+  // Account switches, check-ins and quota refreshes all arrive through here.
+  service.onChange(() => void refresh());
+  void refresh();
+
+  return tray;
+}
+
+function buildMenu(
+  service: WorkbuddyService,
+  state: ServiceState,
+  active: AccountSummary | undefined,
+  actions: TrayActions,
+  refresh: () => Promise<void>
+): Menu {
+  const items: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: active ? `${labelOf(active)} — ${creditsOf(active)} credits` : "未登录",
+      enabled: false,
+    },
+    { type: "separator" },
+    { label: "打开管理页", click: () => actions.open("accounts") },
+  ];
+
+  // One submenu per cluster. The two regions never share tokens, so mixing
+  // them in one list would make "which account am I switching to?" ambiguous.
+  for (const region of ["cn", "intl"] as const) {
+    const inRegion = state.accounts.filter((a) => (a.region ?? "cn") === region);
+    if (inRegion.length === 0) continue;
+    items.push({
+      label: `切换账号 · ${region === "cn" ? "中国大陆" : "Global"}`,
+      submenu: inRegion.map((account) => ({
+        label: `${account.key === state.activeKey ? "●" : "○"} ${labelOf(account)} — ${creditsOf(account)}`,
+        click: () => void act(() => service.switchAccount(account.key), refresh),
+      })),
+    });
+  }
+
+  items.push(
+    { type: "separator" },
+    { label: "全部账号签到", click: () => void act(() => service.checkinAll(), refresh) },
+    { label: "刷新用量", click: () => void act(() => service.refreshAllUsage(), refresh) },
+    { type: "separator" },
+    {
+      label: "开机自动启动",
+      type: "checkbox",
+      checked: app.getLoginItemSettings().openAtLogin,
+      click: (item) => {
+        app.setLoginItemSettings({ openAtLogin: item.checked });
+        // Read it back: macOS can refuse (e.g. a managed machine), and a
+        // checkbox that lies about what will happen is worse than none.
+        const actual = app.getLoginItemSettings().openAtLogin;
+        if (actual !== item.checked) {
+          console.error(`[tray] could not change the login item (still ${actual})`);
+        }
+        void refresh();
+      },
+    },
+    { type: "separator" },
+    { label: "退出 WorkBuddy Anywhere", click: () => actions.quit() }
+  );
+
+  return Menu.buildFromTemplate(items);
+}
+
+/** Run a menu action, then re-read state — `onChange` is not the only path. */
+async function act(
+  task: () => Promise<unknown>,
+  refresh: () => Promise<void>
+): Promise<void> {
+  try {
+    await task();
+  } catch (err) {
+    console.error(`[tray] ${messageOf(err)}`);
+  }
+  await refresh();
+}
+
+function labelOf(account: AccountSummary): string {
+  return account.label || account.key.slice(0, 8);
+}
+
+/** Compact credits for the narrow menu-bar title: 12345 -> 12.3k. */
+function compactCredits(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+  return String(Math.round(value));
+}
+
+function creditsOf(account: AccountSummary): string {
+  return account.usage ? compactCredits(account.usage.remain) : "—";
+}
+
+/**
+ * Sum the quota of one region's accounts that have reported usage.
+ * Returns null when nobody has numbers yet.
+ */
+function regionTotals(
+  accounts: AccountSummary[],
+  region: "cn" | "intl"
+): { remain: number; size: number; reported: number } | null {
+  let remain = 0;
+  let size = 0;
+  let reported = 0;
+  for (const a of accounts) {
+    if ((a.region ?? "cn") !== region || !a.usage) continue;
+    reported += 1;
+    remain += a.usage.remain;
+    size += a.usage.size;
+  }
+  return reported > 0 ? { remain, size, reported } : null;
+}
+
+/** The auto-mode menu: totals up top, per-account list without switching. */
+function buildAutoMenu(
+  service: WorkbuddyService,
+  state: ServiceState,
+  totals: { remain: number; size: number; reported: number },
+  actions: TrayActions,
+  refresh: () => Promise<void>
+): Menu {
+  const items: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: `自动分配 · ${totals.reported} 个账号 — 总计 ${compactCredits(totals.remain)} credits`,
+      enabled: false,
+    },
+    { type: "separator" },
+    { label: "打开管理页", click: () => actions.open("accounts") },
+  ];
+
+  for (const region of ["cn", "intl"] as const) {
+    const inRegion = state.accounts.filter((a) => (a.region ?? "cn") === region);
+    if (inRegion.length === 0) continue;
+    items.push({
+      label: `账号用量 · ${region === "cn" ? "中国大陆" : "Global"}`,
+      submenu: inRegion.map((account) => ({
+        label: `${account.key === state.activeKey ? "●" : "○"} ${labelOf(account)} — ${creditsOf(account)}`,
+        // Auto-select owns request allocation; the stored pick stays as the
+        // fallback but switching it would be a no-op, so don't pretend.
+        enabled: false,
+      })),
+    });
+  }
+
+  items.push(
+    { type: "separator" },
+    { label: "全部账号签到", click: () => void act(() => service.checkinAll(), refresh) },
+    { label: "刷新用量", click: () => void act(() => service.refreshAllUsage(), refresh) },
+    { type: "separator" },
+    {
+      label: "开机自动启动",
+      type: "checkbox",
+      checked: app.getLoginItemSettings().openAtLogin,
+      click: (item) => {
+        app.setLoginItemSettings({ openAtLogin: item.checked });
+        const actual = app.getLoginItemSettings().openAtLogin;
+        if (actual !== item.checked) {
+          console.error(`[tray] could not change the login item (still ${actual})`);
+        }
+        void refresh();
+      },
+    },
+    { type: "separator" },
+    {
+      label: "退出 WorkBuddy Anywhere",
+      click: () => actions.quit(),
+    }
+  );
+
+  return Menu.buildFromTemplate(items);
+}
+
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * The menu-bar icon: a macOS TEMPLATE image (black + alpha), so the system
+ * renders it correctly in light and dark menu bars instead of stamping a
+ * coloured bitmap on top of them.
+ *
+ * Sourced from the same brand mark as the extension's status-bar glyph — see
+ * scripts/make-tray-icons.sh — so the two hosts cannot drift apart. The @2x
+ * twin is picked up automatically by Electron's High-DPI loader.
+ */
+function trayIcon(): Electron.NativeImage {
+  const file = path.join(__dirname, "trayTemplate.png");
+  const image = nativeImage.createFromPath(file);
+  if (image.isEmpty()) {
+    // `new Tray()` on an empty image fails with an opaque platform error, and a
+    // missing asset is a build problem, not a runtime one — say which.
+    throw new Error(`tray icon not found at ${file} — run: node esbuild.mjs`);
+  }
+  // We INTENTIONALLY do not call setTemplateImage(true): the brand mark is
+  // a full-color gradient tile and tinting it on macOS would erase the
+  // identity. The same colored raster shows on Windows / Linux, where tray
+  // icons are always rendered as-is anyway.
+  return image;
+}

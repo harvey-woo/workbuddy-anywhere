@@ -1,0 +1,64 @@
+{
+  "name": "@wbaw/desktop",
+  "productName": "WorkBuddy Anywhere",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WorkBuddy Anywhere for the desktop: sign in once, then manage every account and its remaining quota from a menu-bar app that keeps them all alive.",
+  "license": "MIT",
+  "main": "out/main.js",
+  "scripts": {
+    "compile": "tsc -p ./ --noEmit && node esbuild.mjs",
+    "typecheck": "tsc -p ./ --noEmit",
+    "start": "node esbuild.mjs && electron .",
+    "watch": "node esbuild.mjs --watch",
+    "smoke": "node scripts/smoke-desktop.cjs",
+    "icons": "bash scripts/make-tray-icons.sh && bash scripts/make-app-icon.sh",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win --x64",
+    "dist:mac": "electron-builder --mac"
+  },
+  "build": {
+    "appId": "dev.wbaw.desktop",
+    "productName": "WorkBuddy Anywhere",
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
+    },
+    "electronVersion": "44.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@wbaw/core": "workspace:*",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.4.0"
+  }
+}

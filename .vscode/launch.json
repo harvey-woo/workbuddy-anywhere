@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run the VS Code extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/packages/copilot"],
+      "outFiles": ["${workspaceFolder}/packages/copilot/out/**/*.js"],
+      "preLaunchTask": "build:copilot"
+    },
+    {
+      "name": "Run the VS Code extension (typecheck + smoke test first)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/packages/copilot"],
+      "outFiles": ["${workspaceFolder}/packages/copilot/out/**/*.js"],
+      "preLaunchTask": "check:copilot"
+    }
+  ]
+}

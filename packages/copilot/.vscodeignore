@@ -1,0 +1,14 @@
+# Ship the bundle and the assets, not the sources.
+src/**
+scripts/**
+.vscode/**
+esbuild.mjs
+tsconfig.json
+yarn.lock
+**/*.ts
+**/*.map
+**/*.bak
+icon.svg
+icon@2x.png
+
+# media/ui-dist IS shipped: it is the management UI served into a webview.

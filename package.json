@@ -1,0 +1,16 @@
+{
+  "name": "wbaw",
+  "version": "0.0.0",
+  "private": true,
+  "description": "WorkBuddy Anywhere — one core, three hosts (VS Code, desktop, HTTP API)",
+  "license": "MIT",
+  "packageManager": "yarn@4.12.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "yarn workspace @wbaw/core ui:build && yarn workspaces foreach -Apt run compile",
+    "watch": "yarn workspaces foreach -Api run watch",
+    "test": "yarn workspace @wbaw/core test"
+  }
+}

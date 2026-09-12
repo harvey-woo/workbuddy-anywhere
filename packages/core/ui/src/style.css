@@ -1,0 +1,344 @@
+@import "tailwindcss";
+
+/*
+ * Theming
+ * --------
+ * Default is a self-contained dark theme (used by the local server and the
+ * Electron window). Inside a VS Code webview, VS Code puts vscode-light /
+ * vscode-dark / vscode-high-contrast on <body> and exposes its own
+ * --vscode-* variables — when that happens we adopt the editor theme instead
+ * of forcing ours, so the panel never clashes with the user's theme.
+ */
+:root {
+  --wb-bg: #0f1115;
+  --wb-panel: #161a21;
+  --wb-panel-2: #1b2029;
+  --wb-border: #262d38;
+  --wb-text: #e7eaf0;
+  --wb-muted: #98a2b3;
+  --wb-accent: #4c8dff;
+  --wb-accent-soft: rgba(76, 141, 255, 0.14);
+  --wb-ok: #3ecf8e;
+  --wb-warn: #e0b341;
+  --wb-danger: #f0616d;
+  --wb-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+}
+
+body.vscode-light {
+  --wb-bg: var(--vscode-editor-background, #ffffff);
+  --wb-panel: var(--vscode-sideBar-background, #f3f3f3);
+  --wb-panel-2: var(--vscode-editorWidget-background, #f8f8f8);
+  --wb-border: var(--vscode-widget-border, #d4d4d4);
+  --wb-text: var(--vscode-foreground, #1f1f1f);
+  --wb-muted: var(--vscode-descriptionForeground, #6c6c6c);
+  --wb-accent: var(--vscode-button-background, #005fb8);
+  --wb-accent-soft: rgba(0, 95, 184, 0.12);
+}
+
+body.vscode-dark,
+body.vscode-high-contrast {
+  --wb-bg: var(--vscode-editor-background, #1e1e1e);
+  --wb-panel: var(--vscode-sideBar-background, #252526);
+  --wb-panel-2: var(--vscode-editorWidget-background, #2d2d30);
+  --wb-border: var(--vscode-widget-border, #3c3c3c);
+  --wb-text: var(--vscode-foreground, #cccccc);
+  --wb-muted: var(--vscode-descriptionForeground, #9d9d9d);
+  --wb-accent: var(--vscode-button-background, #0e639c);
+  --wb-accent-soft: rgba(14, 99, 156, 0.18);
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--wb-bg);
+  color: var(--wb-text);
+  font-family: var(--wb-font);
+  font-size: 13px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Small class-based component layer (plain CSS: no build-time @apply
+      surprises between Tailwind majors) ─────────────────────────────────── */
+
+.wb-card {
+  background: var(--wb-panel);
+  border: 1px solid var(--wb-border);
+  border-radius: 12px;
+}
+
+.wb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--wb-border);
+  background: var(--wb-panel-2);
+  color: var(--wb-text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: filter 0.12s ease, opacity 0.12s ease;
+  white-space: nowrap;
+}
+.wb-btn:hover:not(:disabled) {
+  filter: brightness(1.18);
+}
+.wb-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.wb-btn-primary {
+  background: var(--wb-accent);
+  border-color: var(--wb-accent);
+  color: #fff;
+}
+.wb-btn-danger {
+  color: var(--wb-danger);
+}
+
+.wb-input,
+.wb-select {
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--wb-border);
+  background: var(--wb-bg);
+  color: var(--wb-text);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+.wb-input:focus,
+.wb-select:focus {
+  border-color: var(--wb-accent);
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+ * Native <select> styling.
+ *
+ * The element has zero control over its rendered chrome in older engines, so
+ * we ship two parallel style tracks and let the browser pick the better one:
+ *
+ *   1. The fallback (default): strip the OS-drawn chevron with
+ *      `appearance: none`, paint our own via an inline SVG background, and
+ *      keep padding-right generous so the chevron does not overlap text.
+ *   2. The modern track (Chromium 135+ behind a flag, Safari TP, behind
+ *      `appearance: base-select`): opt into the stylable native picker
+ *      (`::picker(select)`, `::picker-icon`, `::picker(select)::checkmark`)
+ *      so the dropdown stays a real OS list — accessibility, search, IME
+ *      all free. When supported we drop the SVG and the extra padding,
+ *      because the browser now draws the affordance itself.
+ *
+ * Color and sizing come from the `--wb-*` tokens so the picker reads as one
+ * with the rest of the management page across the three themes (standalone
+ * dark / VS Code light / VS Code dark). Sizes (`sm`) mirror the reference
+ * gateway's three-step scale without bloat.
+ * ──────────────────────────────────────────────────────────────────────── */
+:where(.wb-select) {
+  /* The fallback's chevron — a 16px heroicons chevron-down, currentColor. */
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='currentColor'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z' clip-rule='evenodd'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 16px 16px;
+  padding-right: 28px;
+  /* Stop Safari from drawing its own gradient over our chevron. */
+  -webkit-appearance: none;
+  appearance: none;
+  /* Caret disappears inside the picker; keep the field tidy. */
+  text-overflow: ellipsis;
+}
+
+:where(.wb-select-sm) {
+  font-size: 11.5px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  background-size: 14px 14px;
+  background-position: right 6px center;
+  padding-right: 24px;
+}
+
+/* Focus ring: visible only on keyboard focus so mouse clicks stay quiet. */
+:where(.wb-select):focus-visible {
+  outline: none;
+  border-color: var(--wb-accent);
+  box-shadow: 0 0 0 2px var(--wb-accent-soft);
+}
+
+/* Invalid form state: same shape, red border + ring token (--wb-danger). */
+:where(.wb-select):user-invalid {
+  border-color: var(--wb-danger);
+}
+:where(.wb-select):user-invalid:focus-visible {
+  box-shadow: 0 0 0 2px rgba(244, 71, 71, 0.18);
+}
+
+/* Disabled: inherits the input styling but adds cursor + opacity cues. */
+:where(.wb-select):disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background-color: var(--wb-panel-2);
+}
+
+/* Modern track: native stylable picker — drop the SVG, reset padding,
+   hand the rest to the OS. Falls inside @supports so older browsers ignore
+   it and keep using the fallback above. */
+@supports (appearance: base-select) {
+  :where(.wb-select),
+  :where(.wb-select-sm) {
+    appearance: base-select;
+    background-image: none;
+    padding-right: 10px;
+  }
+  :where(.wb-select)::picker(select) {
+    appearance: base-select;
+    background: var(--wb-panel);
+    color: var(--wb-text);
+    border: 1px solid var(--wb-border);
+    border-radius: 8px;
+    margin-top: 4px;
+    padding: 4px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+  }
+  :where(.wb-select)::picker-icon {
+    color: var(--wb-muted);
+  }
+  :where(.wb-select) option {
+    padding: 6px 10px;
+    border-radius: 4px;
+  }
+  :where(.wb-select) option:checked {
+    background: var(--wb-accent-soft);
+    color: var(--wb-accent);
+  }
+}
+
+.wb-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--wb-muted);
+  margin-bottom: 5px;
+}
+
+.wb-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--wb-panel-2);
+  border: 1px solid var(--wb-border);
+  color: var(--wb-muted);
+}
+.wb-pill-on {
+  background: var(--wb-accent-soft);
+  border-color: transparent;
+  color: var(--wb-accent);
+}
+
+.wb-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.wb-table th {
+  text-align: left;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--wb-muted);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--wb-border);
+  font-weight: 600;
+}
+.wb-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--wb-border);
+  vertical-align: middle;
+}
+.wb-table tr:last-child td {
+  border-bottom: none;
+}
+
+/*
+ * Capped, scrollable wrapper for long tables.
+ *
+ * An account can carry a long tail of depleted packages (the gateway reports
+ * them all), and letting that stretch the page turns a glance into a scroll
+ * marathon. The header sticks so the columns stay labelled while scrolling.
+ */
+.wb-table-scroll {
+  max-height: 260px;
+  overflow-y: auto;
+}
+.wb-table-scroll .wb-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--wb-panel);
+}
+
+.wb-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--wb-border);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/*
+ * Segmented tab control. Used wherever the choice is "which of two worlds
+ * do you want to look at" rather than a top-level navigation target —
+ * currently Models (CN vs Global catalog) and the login page (region
+ * before signing in).
+ */
+.wb-region-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--wb-panel-2);
+}
+.wb-region-tab {
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  padding: 5px 14px;
+  font-size: 12px;
+  color: var(--wb-muted);
+  cursor: pointer;
+}
+.wb-region-tab:hover:not(:disabled) {
+  color: var(--wb-text);
+}
+.wb-region-tab.active {
+  background: var(--wb-bg);
+  color: var(--wb-text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+}
+.wb-region-tab:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
