@@ -23,3 +23,8 @@ packages/desktop/main.js
 
 # macOS
 .DS_Store
+
+# Bundled release artifacts (distributed out-of-band, not via git).
+# Keep them on disk; the release zip is the actual delivery artifact.
+release-*/
+workbuddy-anywhere-*.zip
