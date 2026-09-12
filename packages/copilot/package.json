@@ -2,7 +2,7 @@
   "name": "workbuddy-anywhere-for-copilot",
   "displayName": "WorkBuddy Anywhere for Copilot",
   "description": "WorkBuddy Anywhere for Copilot: use WorkBuddy models in VS Code Chat, with hosted multi-account support and a management page shared with the desktop app",
-  "version": "0.6.6",
+  "version": "0.7.0",
   "publisher": "codebuddy-chat",
   "icon": "icon.png",
   "engines": {

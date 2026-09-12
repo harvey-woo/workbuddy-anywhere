@@ -65,6 +65,26 @@ Icon assets are generated, not hand-edited:
 yarn workspace @wbaw/desktop icons
 ```
 
+## Versioning
+
+All three packages ship in lock-step — the root `package.json` `version`
+field is the single source of truth, and `yarn sync:version` keeps every
+workspace pinned to it. Changes are recorded as changesets; CI fails the
+build when any pending change lacks one:
+
+```bash
+yarn changeset              # add a .changeset/*.md describing the change
+yarn changeset:status      # what's still un-bumped?
+yarn version-packages      # consumes changesets, bumps root + workspaces
+yarn sync:version          # force workspaces back to root (in case drift)
+yarn ci:drift              # --check: exit 1 if any workspace != root
+yarn release:tag           # git tag v<root-version> && git push --tags
+```
+
+PRs touching source should `yarn changeset` in the same commit; the
+version bump itself happens on the release commit via
+`yarn version-packages && yarn sync:version && yarn release:tag`.
+
 ## Conventions worth knowing
 
 Some identifiers still say `codebuddy`, and deliberately so — they are **state**, not

@@ -1,8 +1,8 @@
 {
   "name": "wbaw",
-  "version": "0.0.0",
+  "version": "0.7.0",
   "private": true,
-  "description": "WorkBuddy Anywhere — one core, three hosts (VS Code, desktop, HTTP API)",
+  "description": "WorkBuddy Anywhere — one core, three hosts (VS Code, desktop, HTTP API). All workspace packages ship in lock-step at the version pinned here.",
   "license": "MIT",
   "packageManager": "yarn@4.12.0",
   "workspaces": [
@@ -11,6 +11,16 @@
   "scripts": {
     "build": "yarn workspace @wbaw/core ui:build && yarn workspaces foreach -Apt run compile",
     "watch": "yarn workspaces foreach -Api run watch",
-    "test": "yarn workspace @wbaw/core test"
+    "test": "yarn workspace @wbaw/core test && node packages/core/scripts/test-auto-select.cjs",
+    "lint": "yarn workspaces foreach -Apt run lint || true",
+    "changeset": "changeset",
+    "changeset:status": "changeset status",
+    "version-packages": "changeset version && yarn sync:version",
+    "sync:version": "node scripts/sync-version.mjs",
+    "ci:drift": "node scripts/sync-version.mjs --check",
+    "release:tag": "git tag \"v$(node -p \"require('./package.json').version\")\" && git push --tags"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^3.0.2"
   }
 }

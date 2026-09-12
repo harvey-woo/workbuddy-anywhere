@@ -42,6 +42,20 @@ async function save(patch: Record<string, unknown>, label: string): Promise<void
 }
 
 /**
+ * The OpenAPI schema URL of the wbaw API service:
+ *   - http transport (core serve)        -> `${baseUrl}/openapi.json`  (real)
+ *   - ipc / vscode transport             -> `http://127.0.0.1:8787/openapi.json`
+ *                                          (assumes the user runs `core serve`
+ *                                          separately — same default port
+ *                                          `cli.ts` listens on)
+ * Picked at render time so the same button always opens the schema that
+ * matches the host the panel is actually running in.
+ */
+const openapiUrl = computed(
+  () => (cfg.baseUrl ? cfg.baseUrl.replace(/\/$/, "") : "http://127.0.0.1:8787") + "/openapi.json"
+);
+
+/**
  * Open a URL in the system browser (or a new tab on plain http). We
  * always open via the host (`vscode.env.openExternal` /
  * `shell.openExternal`) because `window.open` inside the VS Code

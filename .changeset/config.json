@@ -1,0 +1,27 @@
+{
+  "$schema": "https://unpkg.com/@changesets/cli@2.27.11/package.json#schema",
+  "changelog": [
+    "@changesets/cli/changelog",
+    {
+      "repo": "harvey-woo/workbuddy-anywhere"
+    }
+  ],
+  "commit": false,
+  "fixed": [
+    [
+      "@wbaw/core",
+      "workbuddy-anywhere-for-copilot",
+      "@wbaw/desktop"
+    ]
+  ],
+  "updateInternalDependencies": "patch",
+  "privatePackages": {
+    "version": true,
+    "tag": true
+  },
+  "access": "public",
+  "baseBranch": "main",
+  "snapshot": {
+    "useCalculatedVersion": false
+  }
+}

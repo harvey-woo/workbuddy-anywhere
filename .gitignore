@@ -9,6 +9,7 @@ media/ui-dist/
 # electron-builder outputs (per-platform installers)
 packages/desktop/dist/
 packages/desktop/win-unpacked/
+packages/desktop/mac-arm64/
 # stray esbuild artifact from a wrong-output build
 packages/desktop/main.js
 
