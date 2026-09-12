@@ -167,11 +167,13 @@ onMounted(loadVisionModels);
 
     <!--
       Local API reference. Always rendered (the desktop/ipc transport has
-      no /docs route, but the guide + key + curl example are useful in every
-      host). The docs/openapi links open through the host (vscode.env or
-      shell.openExternal) so they leave the webview instead of replacing it.
+      no /docs route, but the guide + key + curl example are useful for
+      desktop / plain-browser hosts where the user might want to point
+      another tool at the local API). VS Code hides this card: the
+      extension registers its own models, there is no other tool to talk
+      to, and the curl block is just noise.
     -->
-    <div class="wb-card mb-4 p-4">
+    <div v-if="cfg.transport !== 'vscode'" class="wb-card mb-4 p-4">
       <div class="mb-2 text-[12.5px] font-medium">Using WorkBuddy from another tool</div>
       <p class="mb-3 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
         Every account exposes an OpenAI-compatible API. The bearer token IS the
@@ -216,26 +218,6 @@ curl -sS -X POST "$BASE_URL/v1/chat/completions" \
           :title="`No HTTP server in ${cfg.transport} transport — see the curl example above for the call shape`"
         >API docs available in HTTP transport</span>
       </div>
-    </div>
-
-    <div class="wb-card p-4">
-      <div class="mb-2 text-[12.5px] font-medium">About</div>
-      <table class="wb-table">
-        <tbody>
-          <tr>
-            <td :style="{ color: 'var(--wb-muted)' }">Transport</td>
-            <td class="wb-mono">{{ cfg.transport }}</td>
-          </tr>
-          <tr v-if="cfg.version">
-            <td :style="{ color: 'var(--wb-muted)' }">Version</td>
-            <td class="wb-mono">{{ cfg.version }}</td>
-          </tr>
-          <tr>
-            <td :style="{ color: 'var(--wb-muted)' }">Model source</td>
-            <td class="wb-mono">{{ state?.modelsSource ?? "—" }}</td>
-          </tr>
-        </tbody>
-      </table>
     </div>
   </section>
 </template>
