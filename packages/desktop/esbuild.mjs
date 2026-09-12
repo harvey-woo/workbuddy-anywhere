@@ -48,15 +48,28 @@ async function stageUi() {
 }
 
 /**
- * The tray icon: a black-with-alpha template image at 18pt plus its @2x twin,
- * generated from the extension's brand mark by scripts/make-tray-icons.sh.
- * Both are committed, so `compile` needs no image tooling installed.
+ * The tray icons: a monochrome TEMPLATE image (18pt + @2x) for macOS
+ * (the system tints it to match light/dark menu bars) plus a full-color
+ * raster (also 18pt + @2x) for Windows and Linux, where the tray cannot
+ * be tinted and the monochrome version would render as a black square.
+ *
+ * `tray.ts` picks the right one per platform at runtime.
+ *
+ * Both sets are generated from the same brand mark by
+ * scripts/make-tray-icons.sh and committed, so `compile` needs no image
+ * tooling installed.
  */
 async function stageTrayIcons() {
-  for (const name of ["trayTemplate.png", "trayTemplate@2x.png", "icon.png"]) {
+  for (const name of [
+    "trayTemplate.png",
+    "trayTemplate@2x.png",
+    "trayColor.png",
+    "trayColor@2x.png",
+    "icon.png",
+  ]) {
     await cp(path.join(here, "assets", name), path.join(outDir, name));
   }
-  console.log("[esbuild] icons -> out/trayTemplate.png(+@2x), out/icon.png");
+  console.log("[esbuild] icons -> out/trayTemplate(+@2x) + trayColor(+@2x) + icon.png");
 }
 
 if (watch) {

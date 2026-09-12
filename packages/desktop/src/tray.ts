@@ -248,16 +248,29 @@ function messageOf(err: unknown): string {
  * twin is picked up automatically by Electron's High-DPI loader.
  */
 function trayIcon(): Electron.NativeImage {
-  const file = path.join(__dirname, "trayTemplate.png");
+  // Two raster sets ship side-by-side:
+  //   - trayTemplate{,_@2x}.png is monochrome — a single-colour path used
+  //     as macOS's template image (set below). The OS recolours it to match
+  //     light/dark menu bars, which is the only way a tray icon can look
+  //     native on a Mac without per-theme assets.
+  //   - trayColor{,_@2x}.png is the full brand mark (gradient tile + path).
+  //     macOS ignores it; Windows and Linux load it directly because the
+  //     monochrome version would render as an opaque black square — the
+  //     tray on those platforms cannot tint a template image.
+  const name =
+    process.platform === "darwin" ? "trayTemplate.png" : "trayColor.png";
+  const file = path.join(__dirname, name);
   const image = nativeImage.createFromPath(file);
   if (image.isEmpty()) {
     // `new Tray()` on an empty image fails with an opaque platform error, and a
     // missing asset is a build problem, not a runtime one — say which.
     throw new Error(`tray icon not found at ${file} — run: node esbuild.mjs`);
   }
-  // We INTENTIONALLY do not call setTemplateImage(true): the brand mark is
-  // a full-color gradient tile and tinting it on macOS would erase the
-  // identity. The same colored raster shows on Windows / Linux, where tray
-  // icons are always rendered as-is anyway.
+  if (process.platform === "darwin") {
+    // macOS-only: mark the image as a template so the system tints it.
+    // On Windows and Linux the setter is a no-op, so calling it
+    // unconditionally would be misleading.
+    image.setTemplateImage(true);
+  }
   return image;
 }
