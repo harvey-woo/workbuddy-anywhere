@@ -42,24 +42,11 @@ async function save(patch: Record<string, unknown>, label: string): Promise<void
 }
 
 /**
- * The URL the curl example should use. Same-origin for the browser / http
- * transport; for VS Code / Electron the host has no real loopback server so
- * the example shows a placeholder and the API link switches to a hint.
- */
-const origin = computed(() => {
-  if (cfg.baseUrl) return cfg.baseUrl.replace(/\/$/, "");
-  if (typeof window !== "undefined") return window.location.origin.replace(/\/$/, "");
-  return "http://127.0.0.1:8787";
-});
-
-/**
- * Open a URL through the host: `vscode.env.openExternal` in the extension,
- * `shell.openExternal` in Electron, `window.open` in a plain browser.
- *
- * The http transport (the standalone `core serve` web UI) has NO
- * openExternal hook on the server — the RPC throws "no browser to open"
- * — but the browser itself opens URLs trivially. Skip the round-trip and
- * call window.open directly there.
+ * Open a URL in the system browser (or a new tab on plain http). We
+ * always open via the host (`vscode.env.openExternal` /
+ * `shell.openExternal`) because `window.open` inside the VS Code
+ * webview opens a new Editor tab — not what the user wants. The http
+ * transport has no host hook, so fall straight through to window.open.
  */
 async function openExternal(url: string): Promise<void> {
   if (cfg.transport === "http") {
@@ -166,58 +153,26 @@ onMounted(loadVisionModels);
     </div>
 
     <!--
-      Local API reference. Always rendered (the desktop/ipc transport has
-      no /docs route, but the guide + key + curl example are useful for
-      desktop / plain-browser hosts where the user might want to point
-      another tool at the local API). VS Code hides this card: the
-      extension registers its own models, there is no other tool to talk
-      to, and the curl block is just noise.
+      Quick pointer for non-extension hosts: the management window is just
+      a UI on top of an OpenAI-compatible local API. Open the docs in a
+      browser to see every route and payload.
     -->
     <div v-if="cfg.transport !== 'vscode'" class="wb-card mb-4 p-4">
       <div class="mb-2 text-[12.5px] font-medium">Using WorkBuddy from another tool</div>
-      <p class="mb-3 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-        Every account exposes an OpenAI-compatible API. The bearer token IS the
-        account key shown on the Accounts page; the base URL is the host's
-        loopback address, with the regional path prefix for the international
-        cluster.
+      <p class="text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
+        WorkBuddy serves an OpenAI-compatible API on this machine — sign in
+        here once, then point any HTTP-capable client (Claude Code,
+        OpenAI&nbsp;SDK, curl, your editor's AI assistant) at the base URL
+        printed on the Accounts page and use an account key as the bearer
+        token. Pick the matching regional path for international accounts.
       </p>
-      <pre
-        class="wb-mono overflow-x-auto rounded p-2 text-[11px]"
-        :style="{ background: 'var(--wb-panel-2)', color: 'var(--wb-text)' }"
-      ><span v-if="cfg.baseUrl">BASE_URL={{ baseUrl }}&#10;</span><span v-else># BASE_URL — see the Accounts page for the host's loopback address&#10;</span>AUTH=&lt;account-key-from-Accounts-page&gt;
-curl -sS -X POST "$BASE_URL/v1/chat/completions" \
-  -H "Authorization: Bearer $AUTH" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"&lt;model-id&gt;","messages":[{"role":"user","content":"hi"}]}'</pre>
-      <div class="mt-2 flex flex-wrap items-center gap-3 text-[11.5px]">
-        <a
-          v-if="cfg.transport === 'http'"
-          href="/docs"
-          target="_blank"
-          rel="noreferrer"
-          :style="{ color: 'var(--wb-accent)' }"
-          @click.prevent="openExternal(`${origin}/docs`)"
-        >/docs</a>
-        <a
-          v-if="cfg.transport === 'http'"
-          href="/openapi.json"
-          target="_blank"
-          rel="noreferrer"
-          :style="{ color: 'var(--wb-accent)' }"
-          @click.prevent="openExternal(`${origin}/openapi.json`)"
-        >/openapi.json</a>
-        <!--
-          Not an anchor on purpose: an <a href="#"> would actually navigate
-          the SPA back to the default route (accounts) when the user clicks
-          the muted hint, which is exactly the wrong UX. Plain text is honest
-          about "this is not clickable".
-        -->
-        <span
-          v-else
-          :style="{ color: 'var(--wb-muted)' }"
-          :title="`No HTTP server in ${cfg.transport} transport — see the curl example above for the call shape`"
-        >API docs available in HTTP transport</span>
-      </div>
+      <button
+        type="button"
+        class="wb-btn wb-btn-primary mt-3"
+        @click="openExternal('https://github.com/harvey-woo/workbuddy-anywhere#api')"
+      >
+        Open the API docs ↗
+      </button>
     </div>
   </section>
 </template>
