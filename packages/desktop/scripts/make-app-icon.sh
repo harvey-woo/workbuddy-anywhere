@@ -10,6 +10,10 @@
 #   assets/icon.png     1024×1024  master PNG (kept around for Linux & misc)
 #   assets/icon.icns    macOS multi-resolution .icns bundle
 #   assets/icon.ico     Windows multi-resolution .ico bundle
+#   assets/trayColor{,_@2x}.png  full-color Windows/Linux tray raster
+#                                       (18pt + retina @2x). macOS does NOT use
+#                                       these — it uses trayTemplate.png from
+#                                       make-tray-icons.sh, tinted at runtime.
 #
 # The artwork is INSET to ~82% of the canvas on purpose: macOS draws its own
 # rounded mask and drop shadow around an app icon, so art that fills the square
@@ -57,4 +61,15 @@ done
 magick "$TMP_ICO"/*.png assets/icon.ico
 rm -rf "$TMP_ICO"
 
+# ── Windows / Linux tray ─────────────────────────────────────────────
+# The colored tray raster: same full brand tile as the .icns / .ico above.
+# macOS does NOT load this — it uses trayTemplate.png (rebuilt by
+# make-tray-icons.sh) with the system tint applied at runtime. Windows
+# and Linux render this raster as-is.
+rsvg-convert -w 18 -h 18 "$SRC" -o assets/trayColor.png
+rsvg-convert -w 36 -h 36 "$SRC" -o assets/trayColor@2x.png
+
 echo "wrote assets/icon.png (1024) + assets/icon.icns + assets/icon.ico"
+echo "wrote assets/trayColor.png (@2x) — Windows / Linux tray"
+echo "(macOS tray template is NOT touched by this script; run"
+echo " make-tray-icons.sh for that when the bare mark path changes)"

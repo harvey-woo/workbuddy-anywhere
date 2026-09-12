@@ -1,37 +1,41 @@
 #!/usr/bin/env bash
 #
-# Regenerates the tray icons. NOT part of `compile` — only re-run when the
-# brand mark changes, and it wants tools (python3 + fontTools, rsvg-convert)
-# that a plain build should not require.
+# Regenerates the macOS template tray icon. NOT part of `compile` — only
+# re-run when the BARE MARK path changes (the same source the VS Code
+# extension's codicon font builder uses), and it wants tools
+# (python3 + fontTools, rsvg-convert) that a plain build should not require.
 #
 #   ./scripts/make-tray-icons.sh
 #
-# Produces TWO tray rasters per resolution (18×18 + 36×36):
+# Produces the macOS template raster only:
 #
-#   assets/trayTemplate.png / @2x.png   MONOCHROME (single-colour path) for
-#                                       macOS, marked template with
-#                                       setTemplateImage(true) so the system
-#                                       can tint it for light/dark menu bars.
-#   assets/trayColor.png / @2x.png      FULL-COLOUR raster (the brand gradient
-#                                       tile) for Windows and Linux, where the
-#                                       tray cannot be tinted and the
-#                                       monochrome version would render as a
-#                                       black square.
+#   assets/trayTemplate.png / @2x.png   MONOCHROME (single-colour path).
+#                                       macOS, marked template at runtime by
+#                                       tray.ts so the system tints it to
+#                                       match light/dark menu bars.
 #
-# `tray.ts` picks the right one per platform at runtime.
+# Out of scope (separate scripts with separate sources):
+#   - assets/icon.png / .icns / .ico     `make-app-icon.sh`
+#   - assets/trayColor.png / @2x.png    `make-app-icon.sh`
+#   - VS Code status-bar glyph font     `build-codicon-font.py` in
+#                                       packages/copilot/scripts
 #
-# The macOS template raster is generated from `icon-mono-path.svg`, the bare
-# path of the brand mark — the same source the extension's codicon font
-# builder uses. The source declares viewBox="0 0 32 32" but the path actually
-# spans ~35.77 x 36.25, so rendering verbatim CLIPS the bottom-right. We
-# fit the real bbox (fontTools BoundsPen), the same trick the font builder
-# uses — that's the whole reason this script exists rather than just calling
-# rsvg-convert on the source SVG.
+# Why split this from the colored assets: the colored tray + app icons are
+# tied to the FULL brand tile (gradient + glow + cat) and change every
+# time the background is recolored. The macOS template only depends on
+# the bare mark path — when the user tweaks the gradient the template
+# must not be touched (rsvg-convert on the same source is deterministic,
+# but a touch is still churn that shows up in git, and there is no reason
+# to rewrite a file whose input has not changed).
+#
+# The source declares viewBox="0 0 32 32" but the path actually spans
+# ~35.77 x 36.25, so rendering it verbatim CLIPS the bottom-right. We
+# fit the real bbox (fontTools BoundsPen), the same trick the font
+# builder uses.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 SRC_MONO="../copilot/media/icon-mono-path.svg"
-SRC_COLOR="../copilot/icon.svg"
 
 for tool in python3 rsvg-convert; do
   command -v "$tool" >/dev/null || { echo "missing: $tool" >&2; exit 1; }
@@ -77,9 +81,6 @@ PY
 rsvg-convert -w 18 -h 18 assets/icon-mono.svg -o assets/trayTemplate.png
 rsvg-convert -w 36 -h 36 assets/icon-mono.svg -o assets/trayTemplate@2x.png
 
-# Windows / Linux: the FULL brand mark (gradient tile + path), shown as-is.
-rsvg-convert -w 18 -h 18 "$SRC_COLOR" -o assets/trayColor.png
-rsvg-convert -w 36 -h 36 "$SRC_COLOR" -o assets/trayColor@2x.png
-
-echo "wrote assets/trayTemplate.png (@2x) — macOS template"
-echo "wrote assets/trayColor.png (@2x)    — Windows / Linux"
+echo "wrote assets/trayTemplate.png + trayTemplate@2x.png — macOS template"
+echo "(the colored tray + app icon are NOT touched by this script; run"
+echo " make-app-icon.sh for those when the brand tile changes)"
