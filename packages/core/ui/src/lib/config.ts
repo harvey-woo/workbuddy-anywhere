@@ -15,7 +15,42 @@ export interface RuntimeConfig {
   token: string;
   /** Base URL override for the http transport ("" = same origin). */
   baseUrl: string;
+  /**
+   * The EXTENSION / PLUGIN version (what the sidebar header shows next to the
+   * brand). Not the host application's version — see `hostVersion`.
+   */
   version: string;
+  /**
+   * The HOST APPLICATION's version: VS Code's `version`, dsh's package
+   * version. Displayed as diagnostics — "which host am I running inside".
+   * Empty when the host does not disclose one.
+   */
+  hostVersion?: string;
+  /**
+   * Host-declared theme. Optional: VS Code and the OS already expose the theme
+   * through the DOM / media queries, so a host only sets this when it knows
+   * something those signals cannot express (e.g. dsh, which paints our iframe
+   * with its own palette).
+   */
+  theme?: "dark" | "light";
+  /**
+   * Host-declared UI language. Optional for the same reason as `theme`; used
+   * when the host's locale cannot be read from `documentElement.lang` (the
+   * case inside an iframe, whose `lang` is our own document's, not dsh's).
+   */
+  locale?: "en" | "zh";
+  /**
+   * Optional host-provided CSS variable overrides (semicolon-separated
+   * declarations like `--wb-bg:#000;--wb-text:#fff`). Applied to
+   * `document.documentElement` on mount so the embedded core UI picks up the
+   * host's palette. Empty / undefined = use core's built-in defaults.
+   */
+  cssVars?: string;
+  /**
+   * Per-surface visibility switches so a host that already shows a title
+   * (e.g. dsh's Settings nav) can hide core's redundant chrome.
+   */
+  display?: { title?: boolean; subtitle?: boolean };
 }
 
 declare global {
@@ -34,6 +69,15 @@ export function runtimeConfig(): RuntimeConfig {
       token: injected.token ?? "",
       baseUrl: injected.baseUrl ?? "",
       version: injected.version ?? "",
+      hostVersion: injected.hostVersion,
+      theme: injected.theme,
+      locale: injected.locale,
+      cssVars: injected.cssVars,
+      // Default to TRUE so existing standalone / VS Code webview hosts (which
+      // don't pass `display`) keep their title and subtitle. Hosts that embed
+      // core into a frame with their own title (e.g. dsh's Settings nav) opt
+      // out explicitly with `display: { title: false, subtitle: false }`.
+      display: injected.display ?? { title: true, subtitle: true },
     };
   }
   if (window.workbuddy?.invoke) {

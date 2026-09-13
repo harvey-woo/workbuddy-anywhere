@@ -5,6 +5,7 @@ import type {
   ServiceState,
   WorkbuddyService,
 } from "@wbaw/core";
+import { trayT, type TrayLocale } from "./tray-i18n";
 
 /** The tabs a tray action can ask the window to show. */
 export type TrayRoute = "accounts" | "login";
@@ -77,22 +78,23 @@ function buildMenu(
   actions: TrayActions,
   refresh: () => Promise<void>
 ): Menu {
+  const locale: TrayLocale = state.settings.locale === "zh" ? "zh" : "en";
+  const theme = state.settings.theme === "light" ? "light" : "dark";
+
   const items: Electron.MenuItemConstructorOptions[] = [
     {
-      label: active ? `${labelOf(active)} — ${creditsOf(active)} credits` : "未登录",
+      label: active ? `${labelOf(active)} — ${creditsOf(active)} credits` : trayT(locale, "notSignedIn"),
       enabled: false,
     },
     { type: "separator" },
-    { label: "打开管理页", click: () => actions.open("accounts") },
+    { label: trayT(locale, "openManagement"), click: () => actions.open("accounts") },
   ];
 
-  // One submenu per cluster. The two regions never share tokens, so mixing
-  // them in one list would make "which account am I switching to?" ambiguous.
   for (const region of ["cn", "intl"] as const) {
     const inRegion = state.accounts.filter((a) => (a.region ?? "cn") === region);
     if (inRegion.length === 0) continue;
     items.push({
-      label: `切换账号 · ${region === "cn" ? "中国大陆" : "Global"}`,
+      label: trayT(locale, region === "cn" ? "switchAccountCn" : "switchAccountIntl"),
       submenu: inRegion.map((account) => ({
         label: `${account.key === state.activeKey ? "●" : "○"} ${labelOf(account)} — ${creditsOf(account)}`,
         click: () => void act(() => service.switchAccount(account.key), refresh),
@@ -102,17 +104,51 @@ function buildMenu(
 
   items.push(
     { type: "separator" },
-    { label: "全部账号签到", click: () => void act(() => service.checkinAll(), refresh) },
-    { label: "刷新用量", click: () => void act(() => service.refreshAllUsage(), refresh) },
+    { label: trayT(locale, "checkinAll"), click: () => void act(() => service.checkinAll(), refresh) },
+    { label: trayT(locale, "refreshUsage"), click: () => void act(() => service.refreshAllUsage(), refresh) },
     { type: "separator" },
+    // ── Theme submenu ───────────────────────────────────────────────────
     {
-      label: "开机自动启动",
+      label: trayT(locale, "theme"),
+      submenu: [
+        {
+          label: trayT(locale, "dark"),
+          type: "radio",
+          checked: theme === "dark",
+          click: () => void act(() => service.updateSettings({ theme: "dark" }), refresh),
+        },
+        {
+          label: trayT(locale, "light"),
+          type: "radio",
+          checked: theme === "light",
+          click: () => void act(() => service.updateSettings({ theme: "light" }), refresh),
+        },
+      ],
+    },
+    // ── Language submenu ────────────────────────────────────────────────
+    {
+      label: trayT(locale, "language"),
+      submenu: [
+        {
+          label: trayT(locale, "english"),
+          type: "radio",
+          checked: locale === "en",
+          click: () => void act(() => service.updateSettings({ locale: "en" }), refresh),
+        },
+        {
+          label: trayT(locale, "chinese"),
+          type: "radio",
+          checked: locale === "zh",
+          click: () => void act(() => service.updateSettings({ locale: "zh" }), refresh),
+        },
+      ],
+    },
+    {
+      label: trayT(locale, "openAtLogin"),
       type: "checkbox",
       checked: app.getLoginItemSettings().openAtLogin,
       click: (item) => {
         app.setLoginItemSettings({ openAtLogin: item.checked });
-        // Read it back: macOS can refuse (e.g. a managed machine), and a
-        // checkbox that lies about what will happen is worse than none.
         const actual = app.getLoginItemSettings().openAtLogin;
         if (actual !== item.checked) {
           console.error(`[tray] could not change the login item (still ${actual})`);
@@ -121,7 +157,7 @@ function buildMenu(
       },
     },
     { type: "separator" },
-    { label: "退出 WorkBuddy Anywhere", click: () => actions.quit() }
+    { label: trayT(locale, "quit"), click: () => actions.quit() }
   );
 
   return Menu.buildFromTemplate(items);
@@ -183,24 +219,28 @@ function buildAutoMenu(
   actions: TrayActions,
   refresh: () => Promise<void>
 ): Menu {
+  const locale: TrayLocale = state.settings.locale === "zh" ? "zh" : "en";
+  const theme = state.settings.theme === "light" ? "light" : "dark";
+
   const items: Electron.MenuItemConstructorOptions[] = [
     {
-      label: `自动分配 · ${totals.reported} 个账号 — 总计 ${compactCredits(totals.remain)} credits`,
+      label: trayT(locale, "autoDistribute", {
+        count: String(totals.reported),
+        total: compactCredits(totals.remain),
+      }),
       enabled: false,
     },
     { type: "separator" },
-    { label: "打开管理页", click: () => actions.open("accounts") },
+    { label: trayT(locale, "openManagement"), click: () => actions.open("accounts") },
   ];
 
   for (const region of ["cn", "intl"] as const) {
     const inRegion = state.accounts.filter((a) => (a.region ?? "cn") === region);
     if (inRegion.length === 0) continue;
     items.push({
-      label: `账号用量 · ${region === "cn" ? "中国大陆" : "Global"}`,
+      label: trayT(locale, region === "cn" ? "usageCn" : "usageIntl"),
       submenu: inRegion.map((account) => ({
         label: `${account.key === state.activeKey ? "●" : "○"} ${labelOf(account)} — ${creditsOf(account)}`,
-        // Auto-select owns request allocation; the stored pick stays as the
-        // fallback but switching it would be a no-op, so don't pretend.
         enabled: false,
       })),
     });
@@ -208,11 +248,45 @@ function buildAutoMenu(
 
   items.push(
     { type: "separator" },
-    { label: "全部账号签到", click: () => void act(() => service.checkinAll(), refresh) },
-    { label: "刷新用量", click: () => void act(() => service.refreshAllUsage(), refresh) },
+    { label: trayT(locale, "checkinAll"), click: () => void act(() => service.checkinAll(), refresh) },
+    { label: trayT(locale, "refreshUsage"), click: () => void act(() => service.refreshAllUsage(), refresh) },
     { type: "separator" },
     {
-      label: "开机自动启动",
+      label: trayT(locale, "theme"),
+      submenu: [
+        {
+          label: trayT(locale, "dark"),
+          type: "radio",
+          checked: theme === "dark",
+          click: () => void act(() => service.updateSettings({ theme: "dark" }), refresh),
+        },
+        {
+          label: trayT(locale, "light"),
+          type: "radio",
+          checked: theme === "light",
+          click: () => void act(() => service.updateSettings({ theme: "light" }), refresh),
+        },
+      ],
+    },
+    {
+      label: trayT(locale, "language"),
+      submenu: [
+        {
+          label: trayT(locale, "english"),
+          type: "radio",
+          checked: locale === "en",
+          click: () => void act(() => service.updateSettings({ locale: "en" }), refresh),
+        },
+        {
+          label: trayT(locale, "chinese"),
+          type: "radio",
+          checked: locale === "zh",
+          click: () => void act(() => service.updateSettings({ locale: "zh" }), refresh),
+        },
+      ],
+    },
+    {
+      label: trayT(locale, "openAtLogin"),
       type: "checkbox",
       checked: app.getLoginItemSettings().openAtLogin,
       click: (item) => {
@@ -226,7 +300,7 @@ function buildAutoMenu(
     },
     { type: "separator" },
     {
-      label: "退出 WorkBuddy Anywhere",
+      label: trayT(locale, "quit"),
       click: () => actions.quit(),
     }
   );

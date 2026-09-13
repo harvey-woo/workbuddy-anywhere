@@ -65,6 +65,13 @@ export interface Settings {
    */
   autoSelectAccount: boolean;
   /**
+   * Whether the daily check-in feature is enabled PER REGION. The INTL
+   * cluster has no check-in endpoint, so it defaults to off; a host may
+   * still flip either flag from its own settings surface. This is a plain
+   * config field — core only reads it, no UI toggle ships here.
+   */
+  checkinByRegion: { cn: boolean; intl: boolean };
+  /**
    * The cluster the user is currently looking at.
    *
    * Lives in settings so it survives restarts and is shared with every
@@ -75,6 +82,10 @@ export interface Settings {
    * which cluster's account list, login form, and catalog to show.
    */
   region: Region;
+  /** Visual theme: "dark" (default) or "light". In VS Code webview, the host controls this. */
+  theme: "dark" | "light";
+  /** UI language: "en" (default) or "zh". In VS Code webview, the host locale is used. */
+  locale: "en" | "zh";
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -85,7 +96,10 @@ export const DEFAULT_SETTINGS: Settings = {
   modelBlocklist: [],
   enabled: true,
   autoSelectAccount: false,
+  checkinByRegion: { cn: true, intl: false },
   region: DEFAULT_REGION,
+  theme: "dark",
+  locale: "en",
 };
 
 export interface SettingsStore {
@@ -107,7 +121,29 @@ export class FileSettingsStore implements SettingsStore {
       const raw = JSON.parse(
         await fs.readFile(this.file, "utf-8")
       ) as Partial<Settings>;
-      return { ...DEFAULT_SETTINGS, ...raw };
+      // Self-heal: if a previous run persisted an invalid region (e.g. a
+      // label string slipped into the patch, or a human edited the file
+      // by hand), `...DEFAULT_SETTINGS, ...raw` would let the bad value
+      // overwrite the default and strand the UI with no region selected.
+      // Validate before merging.
+      const rawRegion = (raw as Partial<Settings>).region;
+      // checkinByRegion is a nested object: a hand-edited or older file may
+      // miss one side, so merge it over the defaults per key instead of
+      // letting a partial object wipe a flag.
+      const rawCheckin = (raw as Partial<Settings>).checkinByRegion;
+      const sanitized: Partial<Settings> = {
+        ...raw,
+        region: rawRegion === "cn" || rawRegion === "intl" ? rawRegion : DEFAULT_REGION,
+        ...(rawCheckin
+          ? {
+              checkinByRegion: {
+                cn: rawCheckin.cn ?? DEFAULT_SETTINGS.checkinByRegion.cn,
+                intl: rawCheckin.intl ?? DEFAULT_SETTINGS.checkinByRegion.intl,
+              },
+            }
+          : {}),
+      };
+      return { ...DEFAULT_SETTINGS, ...sanitized };
     } catch {
       return { ...DEFAULT_SETTINGS };
     }

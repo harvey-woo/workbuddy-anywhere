@@ -502,6 +502,20 @@ export class WorkbuddyService {
     return auth?.region ?? DEFAULT_REGION;
   }
 
+  /**
+   * Whether the daily check-in should run for THIS account's cluster. The
+   * INTL gateway has no check-in endpoint, so it ships disabled; both flags
+   * live in settings (`checkinByRegion`) and are plain config — nothing in
+   * core renders a toggle for them. A disabled region behaves as "no
+   * check-in feature exists": every entry point skips silently.
+   */
+  private async checkinEnabledFor(auth: WorkbuddyAuth | undefined): Promise<boolean> {
+    const settings = await this.opts.settings.get();
+    const region = this.regionOf(auth);
+    const flags = settings.checkinByRegion;
+    return region === "intl" ? (flags?.intl ?? false) : (flags?.cn ?? true);
+  }
+
   private async currentRegion(): Promise<Region> {
     const settings = await this.opts.settings.get();
     return settings.region;
@@ -837,11 +851,13 @@ export class WorkbuddyService {
     await this.loadCatalog(region, auth);
 
     let checkin: CheckinResult | undefined;
-    try {
-      checkin = await ensureCheckin(auth);
-      this.checkins.set(key, checkin);
-    } catch (err) {
-      this.log(`check-in after login failed: ${errText(err)}`);
+    if (await this.checkinEnabledFor(auth)) {
+      try {
+        checkin = await ensureCheckin(auth);
+        this.checkins.set(key, checkin);
+      } catch (err) {
+        this.log(`check-in after login failed: ${errText(err)}`);
+      }
     }
     await this.refreshBillingFor(auth);
 
@@ -915,12 +931,19 @@ export class WorkbuddyService {
     const auth = await this.ensureAuth(key);
     const accountId = key ?? accountKey(auth);
     let checkin: CheckinResult;
-    try {
-      checkin = await ensureCheckin(auth);
-    } catch (err) {
-      checkin = { state: "unknown", error: errText(err) };
+    if (await this.checkinEnabledFor(auth)) {
+      try {
+        checkin = await ensureCheckin(auth);
+      } catch (err) {
+        checkin = { state: "unknown", error: errText(err) };
+      }
+      this.checkins.set(accountId, checkin);
+    } else {
+      // Check-in disabled for this region: "unknown" is the schema's
+      // not-applicable state; consumers hide the row via checkinEnabled in
+      // the state payload rather than parsing this.
+      checkin = { state: "unknown" };
     }
-    this.checkins.set(accountId, checkin);
     const billing = await this.fetchBillingForAccount(auth, accountId);
     this.emit();
     return { billing, checkin };
@@ -939,6 +962,9 @@ export class WorkbuddyService {
       const key = accountKey(account);
       const auth = (await this.loadValidAuth(key)) ?? account;
       await this.refreshBillingFor(auth);
+      // Region gate: skip the status read entirely for check-in-less
+      // clusters instead of leaving a stale/erred status in the map.
+      if (!(await this.checkinEnabledFor(auth))) continue;
       try {
         this.checkins.set(key, await fetchCheckinStatus(auth));
       } catch (err) {
@@ -982,9 +1008,17 @@ export class WorkbuddyService {
 
   private async checkinAccount(key?: string): Promise<CheckinResult> {
     const accountId = key ?? (await this.activeKeyOrNull()) ?? "default";
+    const auth = await this.ensureAuth(key);
+    // Region gate: a cluster without check-in simply reports "unknown" and
+    // does not touch the gateway — checkinAll then counts nothing for it.
+    if (!(await this.checkinEnabledFor(auth))) {
+      const skipped: CheckinResult = { state: "unknown" };
+      this.checkins.set(accountId, skipped);
+      this.emit();
+      return skipped;
+    }
     let result: CheckinResult;
     try {
-      const auth = await this.ensureAuth(key);
       result = await ensureCheckin(auth);
       if (result.state === "claimed" && result.freshlyClaimed) {
         await this.refreshBillingFor(auth);
@@ -1192,6 +1226,27 @@ export class WorkbuddyService {
     this.emit();
     return this.getModels();
   }
+
+  /**
+   * Make sure ONE region's catalog is cached, using that region's own
+   * account when there is one (the clusters do not share sessions, so a CN
+   * catalog request must carry a CN Bearer). No-op when the catalog is
+   * already cached. Hosts that expose BOTH regions at once — the dsh
+   * adapter registers `workbuddy` and `workbuddy-intl` as separate model
+   * groups — call this at startup for each region, because `init()` only
+   * warms the ACTIVE account's region and the other group would silently
+   * resolve to an empty list.
+   */
+  async ensureCatalog(region: Region): Promise<void> {
+    if (this.catalogs.has(region)) return;
+    try {
+      const auth = await this.ensureAuthInRegion(region);
+      await this.loadCatalog(region, this.regionOf(auth) === region ? auth : undefined);
+    } catch {
+      // Anonymous fallback lives inside loadCatalog; nothing to surface here.
+    }
+  }
+
   /**
    * Fetch the model catalog once per region and cache it.
    *

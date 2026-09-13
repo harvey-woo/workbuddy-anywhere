@@ -30,8 +30,12 @@ export async function refreshState(region?: Region): Promise<void> {
     // so region-scoped URLs are built from the right cluster prefix. The FIRST
     // load has neither (no state yet, no explicit region), which is not a bug —
     // fall back to the default instead of leaving the hint unset, or the RPC
-    // layer logs a "no region hint set" warning on every cold start.
-    setRegionForCalls(state.value?.settings?.region ?? region ?? DEFAULT_REGION);
+    // layer logs a "no region hint set" warning on every cold start. The
+    // persisted region may be garbage (see the comment on `region` below),
+    // so validate before forwarding it as the RPC hint.
+    const persisted = state.value?.settings?.region;
+    const validPersisted = persisted === "cn" || persisted === "intl" ? persisted : undefined;
+    setRegionForCalls(validPersisted ?? region ?? DEFAULT_REGION);
     let next = await call("getState", region ? { region } : undefined);
     // A session can appear while we are already running (the user signs in from
     // the VS Code webview, or an auth file is dropped into the data dir). The
@@ -61,7 +65,15 @@ export const models = computed(() => state.value?.models ?? []);
  * touch which account is in use.
  */
 export const region = computed<Region>(
-  () => state.value?.settings?.region ?? DEFAULT_REGION
+  // The persisted region may contain garbage from an earlier buggy write
+  // (e.g. a label string was passed where a Region key was expected, or an
+  // external tool wrote to settings.json by hand). Treat anything that isn't
+  // a valid Region as "no choice" and fall back to DEFAULT_REGION so the UI
+  // is never stranded with no region button highlighted.
+  () => {
+    const r = state.value?.settings?.region;
+    return r === "cn" || r === "intl" ? r : DEFAULT_REGION;
+  }
 );
 
 export function accountsIn(r: Region): ServiceState["accounts"] {

@@ -243,6 +243,97 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@deepseek-ai/cordis@npm:^4.0.2":
+  version: 4.0.2
+  resolution: "@deepseek-ai/cordis@npm:4.0.2"
+  dependencies:
+    "@deepseek-ai/cosmokit": "npm:^1.8.3"
+    "@standard-schema/spec": "npm:^1.1.0"
+  peerDependencies:
+    "@deepseek-ai/cordis-plugin-include": ^1.0.7
+    "@deepseek-ai/cordis-plugin-loader": ^1.0.3
+  peerDependenciesMeta:
+    "@deepseek-ai/cordis-plugin-include":
+      optional: true
+    "@deepseek-ai/cordis-plugin-loader":
+      optional: true
+  bin:
+    cordis: bin.js
+  checksum: 10c0/62b7a84f591ecf7399651e577b68c7f0336e1ffa94692b202bac7994604fabe818db53660c4945a6da692bf8ce0ec43d09c07222b7b5c3ce5a1b5993e4708c50
+  languageName: node
+  linkType: hard
+
+"@deepseek-ai/cosmokit@npm:^1.8.3":
+  version: 1.8.3
+  resolution: "@deepseek-ai/cosmokit@npm:1.8.3"
+  checksum: 10c0/fb84c4560d6563ce0d1103489689478f109d0634a9d5393b6eb1a411ac5679c3b8c30e3182325b8385316a53116204a613e214b5f6da4b8c645d871739eb02d0
+  languageName: node
+  linkType: hard
+
+"@deepseek-ai/dsh-attachment@npm:^0.1.5-rc.1":
+  version: 0.1.5-rc.2
+  resolution: "@deepseek-ai/dsh-attachment@npm:0.1.5-rc.2"
+  peerDependencies:
+    "@deepseek-ai/cordis": ^4.0.2
+    "@deepseek-ai/dsh-brand": ^0.1.5-rc.2
+  checksum: 10c0/d5eca8c439db1fa3c47361fd3bde4e00b87a8b1d15acdb5132ffc4c20d70a991b73436aea708a811540e6c1b27cf5a400c01327e47a5a595ad267fcbdc165307
+  languageName: node
+  linkType: hard
+
+"@deepseek-ai/dsh-brand@npm:^0.1.5-rc.1":
+  version: 0.1.5-rc.2
+  resolution: "@deepseek-ai/dsh-brand@npm:0.1.5-rc.2"
+  peerDependencies:
+    "@deepseek-ai/cordis": ^4.0.2
+  checksum: 10c0/9865ccbd9cbacde83d86bd0ef7e43ee17336524d49e7e75c5e3db2c4a3c6404df13328f9681fd07bd984937455464d2ce62aa5c45e2abed0c820f45443bd2bf9
+  languageName: node
+  linkType: hard
+
+"@deepseek-ai/dsh-invariants@npm:^0.1.5-rc.1":
+  version: 0.1.5-rc.2
+  resolution: "@deepseek-ai/dsh-invariants@npm:0.1.5-rc.2"
+  dependencies:
+    "@deepseek-ai/schemastery": "npm:^3.18.2"
+  peerDependencies:
+    "@deepseek-ai/cordis": ^4.0.2
+  checksum: 10c0/3fb263332a3556d656eaba2f8928b0d85af266f14381d5425688e0d568afd611318b1893169d0af2bac632450aba58cd0d75892208632542ce5732163a9230cb
+  languageName: node
+  linkType: hard
+
+"@deepseek-ai/dsh-llm@npm:^0.0.1-rc.1":
+  version: 0.0.1-rc.5
+  resolution: "@deepseek-ai/dsh-llm@npm:0.0.1-rc.5"
+  dependencies:
+    "@deepseek-ai/schemastery": "npm:^3.18.1-rc.4"
+  peerDependencies:
+    "@deepseek-ai/cordis": ^4.0.1-rc.4
+    "@deepseek-ai/dsh-attachment": ^0.0.1-rc.5
+    "@deepseek-ai/dsh-brand": ^0.0.1-rc.5
+    "@deepseek-ai/dsh-invariants": ^0.0.1-rc.5
+    "@deepseek-ai/dsh-timeout": ^0.0.1-rc.5
+  checksum: 10c0/2170306edab6a41be0541477d01b855ff3840816b89d042b692de52c41c622fa42466a6fa146cf53ee22a6f52503fb9663d3ff213e3e57b0478a57ad8e60bd7f
+  languageName: node
+  linkType: hard
+
+"@deepseek-ai/dsh-timeout@npm:^0.1.5-rc.1":
+  version: 0.1.5-rc.2
+  resolution: "@deepseek-ai/dsh-timeout@npm:0.1.5-rc.2"
+  peerDependencies:
+    "@deepseek-ai/cordis": ^4.0.2
+  checksum: 10c0/bd32b1d648d05e13cb87ef3c95e8f0f3bac382d1703fb2c1df8cb815aa09295d72070bb9ffe43958ebb7eeeab19e923c4c7455321041cbea0a7c66e90837b408
+  languageName: node
+  linkType: hard
+
+"@deepseek-ai/schemastery@npm:^3.18.1-rc.4, @deepseek-ai/schemastery@npm:^3.18.2":
+  version: 3.18.2
+  resolution: "@deepseek-ai/schemastery@npm:3.18.2"
+  dependencies:
+    "@deepseek-ai/cosmokit": "npm:^1.8.3"
+    "@standard-schema/spec": "npm:^1.1.0"
+  checksum: 10c0/699651803c2cec6512ec648c31e0b4fcf07451b0adbf7c6bfb8462b6fa84f97584372b00a31ec8f1248c283f8e91819aa143432c28271347de5568ef9ea46421
+  languageName: node
+  linkType: hard
+
 "@electron-internal/extract-zip@npm:^1.0.1":
   version: 1.0.5
   resolution: "@electron-internal/extract-zip@npm:1.0.5"
@@ -984,6 +1075,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@standard-schema/spec@npm:^1.1.0":
+  version: 1.1.0
+  resolution: "@standard-schema/spec@npm:1.1.0"
+  checksum: 10c0/d90f55acde4b2deb983529c87e8025fa693de1a5e8b49ecc6eb84d1fd96328add0e03d7d551442156c7432fd78165b2c26ff561b970a9a881f046abb78d6a526
+  languageName: node
+  linkType: hard
+
 "@szmarczak/http-timer@npm:^4.0.5":
   version: 4.0.6
   resolution: "@szmarczak/http-timer@npm:4.0.6"
@@ -1533,6 +1631,25 @@ __metadata:
     electron-builder: "npm:^26.0.12"
     esbuild: "npm:^0.25.0"
     typescript: "npm:^5.4.0"
+  languageName: unknown
+  linkType: soft
+
+"@wbaw/dsh-workbuddy@workspace:packages/dsh":
+  version: 0.0.0-use.local
+  resolution: "@wbaw/dsh-workbuddy@workspace:packages/dsh"
+  dependencies:
+    "@deepseek-ai/cordis": "npm:^4.0.2"
+    "@deepseek-ai/dsh-attachment": "npm:^0.1.5-rc.1"
+    "@deepseek-ai/dsh-brand": "npm:^0.1.5-rc.1"
+    "@deepseek-ai/dsh-invariants": "npm:^0.1.5-rc.1"
+    "@deepseek-ai/dsh-llm": "npm:^0.0.1-rc.1"
+    "@deepseek-ai/dsh-timeout": "npm:^0.1.5-rc.1"
+    "@deepseek-ai/schemastery": "npm:^3.18.2"
+    "@types/node": "npm:^20.11.0"
+    "@wbaw/core": "workspace:*"
+    typescript: "npm:^5.4.0"
+  peerDependencies:
+    "@deepseek-ai/cordis": ^4.0.2
   languageName: unknown
   linkType: soft
 

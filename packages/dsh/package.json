@@ -1,0 +1,60 @@
+{
+  "name": "@wbaw/dsh-workbuddy",
+  "version": "0.7.0",
+  "description": "WorkBuddy Anywhere for DeepSeek Harness: use WorkBuddy models in dsh chat, with the shared multi-account management page served inside dsh Settings.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings"
+      ],
+      "platform": "web"
+    }
+  },
+  "files": [
+    "lib/**",
+    "client.js",
+    "cordis.patch.yml",
+    "ui-dist/**",
+    "README.md"
+  ],
+  "scripts": {
+    "compile": "tsc -p ./ && node scripts/stage-ui.mjs",
+    "build": "yarn compile",
+    "watch": "tsc -w -p ./",
+    "typecheck": "tsc -p ./ --noEmit"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-attachment": "^0.1.5-rc.1",
+    "@deepseek-ai/dsh-brand": "^0.1.5-rc.1",
+    "@deepseek-ai/dsh-invariants": "^0.1.5-rc.1",
+    "@deepseek-ai/dsh-llm": "^0.0.1-rc.1",
+    "@deepseek-ai/dsh-timeout": "^0.1.5-rc.1",
+    "@deepseek-ai/schemastery": "^3.18.2",
+    "@wbaw/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2"
+  }
+}

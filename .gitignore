@@ -5,6 +5,11 @@ node_modules/
 out/
 ui-dist/
 media/ui-dist/
+# Scoped to the dsh plugin's bundle output. Do NOT widen this to a bare `lib/`:
+# that also matches `packages/core/ui/src/lib/`, which is SOURCE (i18n/theme
+# live there) — and because those files were never committed, ignoring them
+# hides them from `git status` entirely, so a commit silently drops them.
+packages/dsh/lib/
 *.vsix
 # electron-builder outputs (per-platform installers)
 packages/desktop/dist/

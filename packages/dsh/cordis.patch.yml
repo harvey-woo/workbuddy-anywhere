@@ -1,0 +1,20 @@
+# @wbaw/dsh-workbuddy bundle patch — mounts the WorkBuddy Anywhere LLM adapter
+# as a dsh plugin layer. dsh applies this over the profile root (after the base
+# bundle, before the user's own cordis.patch.yml). A bundle's patch is a
+# top-level YAML array of `insert`/`override`/`disable` entries; the `insert`
+# below appends our plugin to Cordis's `plugins` list. Each plugin row's
+# `name` is the installed package (resolved from the profile's node_modules),
+# `id` its slot, and `config` the object passed to the plugin's `apply(ctx, c)`.
+#
+# This mirrors how @deepseek-ai/dsh-base mounts dsh-llm-pi-ai / dsh-llm-retry:
+# an LLM adapter is just a Cordis plugin listed here.
+
+- insert:
+    - id: dsh-workbuddy
+      name: '@wbaw/dsh-workbuddy'
+      config:
+        # Shares the on-disk login with the WorkBuddy desktop app and `wbaw serve`.
+        # Omitting dataDir lets the plugin default to ~/ .workbuddy-anywhere.
+        providers:
+          - workbuddy        # CN cluster
+          - workbuddy-intl   # Global cluster

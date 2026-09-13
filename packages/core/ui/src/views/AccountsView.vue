@@ -31,11 +31,13 @@ import {
 import { compact, levelColor, num, pct, percentOf, shortDate } from "../lib/format";
 import { runtimeConfig } from "../lib/config";
 import { navigate } from "../lib/router";
+import { useI18n } from "../lib/i18n";
 
+const { t } = useI18n();
 const cfg = runtimeConfig();
 const copied = ref("");
 const notice = ref("");
-/** Already claimed today — the per-account button disables on this. *//** The one account a check-in is currently running for (drives its own button). */
+/** Already claimed today — the per-account button disables on this. */
 const checkingKey = ref("");
 const refreshing = ref(false);
 /** Which account cards have their package table expanded. */
@@ -117,19 +119,34 @@ function isDepleted(p: { cycleCapacityRemain?: number; capacityRemain?: number }
 
 function checkinLabel(a: AccountSummary): string {
   const c = a.checkin;
-  if (!c) return "not checked yet";
+  if (!c) return t("accounts.checkinPending");
   if (c.state === "claimed") {
-    return c.credit
-      ? `checked in${c.freshlyClaimed ? " (just now)" : ""} +${compact(c.credit)}`
-      : "checked in";
+    if (!c.credit) return t("accounts.checkinDone");
+    const creditPart = t("accounts.checkinCredits", { credits: compact(c.credit) });
+    return c.freshlyClaimed
+      ? `${t("accounts.checkinDoneJustNow")} ${creditPart}`
+      : `${t("accounts.checkinDone")} ${creditPart}`;
   }
-  if (c.state === "unclaimed") return "not claimed yet";
+  if (c.state === "unclaimed") return t("accounts.checkinPending");
   return c.error ? `unknown (${c.error})` : "unknown";
 }
 
 /** Already claimed today — the per-account button disables on this. */
 function isClaimed(a: AccountSummary): boolean {
   return a.checkin?.state === "claimed";
+}
+
+/**
+ * Whether THIS account's cluster has the check-in feature at all. The flags
+ * live in settings (`checkinByRegion`, default {cn: true, intl: false});
+ * a region without the feature renders no check-in status line and no
+ * per-account check-in button — the feature does not exist there, so the
+ * card must not pretend it does.
+ */
+function checkinEnabledFor(a: AccountSummary): boolean {
+  const flags = state.value?.settings?.checkinByRegion;
+  if (!flags) return true;
+  return a.region === "intl" ? !!flags.intl : !!flags.cn;
 }
 
 async function copy(text: string, tag: string): Promise<void> {
@@ -180,7 +197,7 @@ async function remove(key: string, label: string): Promise<void> {
   await run(async () => {
     await call("removeAccount", { key });
     await refreshState();
-    notice.value = `Removed ${label}.`;
+    notice.value = t('accounts.removedNotice', { name: label });
   });
 }
 
@@ -194,9 +211,11 @@ async function checkinOne(key: string): Promise<void> {
       notice.value =
         result.state === "claimed"
           ? result.freshlyClaimed
-            ? `Checked in${result.credit ? ` — +${result.credit} credits` : ""}.`
-            : "Already checked in today."
-          : `Check-in unavailable${result.error ? `: ${result.error}` : "."}`;
+            ? t('accounts.checkinJustNow', {
+                credits: result.credit ? String(result.credit) : '',
+              })
+            : t('accounts.checkinAlreadyToday')
+          : t('accounts.checkinUnavailable', { error: result.error ?? '' });
     });
   } finally {
     checkingKey.value = "";
@@ -227,17 +246,16 @@ onMounted(() => {
     <div class="mb-4 flex items-start justify-between gap-3">
       <div>
         <h1 class="text-[15px] font-semibold">
-          Accounts <span class="wb-pill ml-1">{{ regionLabel(region) }}</span>
+          {{ t('accounts.title') }} <span class="wb-pill ml-1">{{ regionLabel(region) }}</span>
         </h1>
         <p class="mt-0.5 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-          {{ regionLabel(region) }} accounts only. Switch the region in the
-          sidebar to manage the other cluster.
+          {{ t('accounts.regionHint', { region: regionLabel(region) }) }}
         </p>
       </div>
       <div class="flex items-center gap-2">
-        <button class="wb-btn wb-btn-primary" @click="navigate('login')">Add account</button>
+        <button class="wb-btn wb-btn-primary" @click="navigate('login')">{{ t('accounts.addAccount') }}</button>
         <button class="wb-btn" :disabled="busy || refreshing || !hasAccounts" @click="refreshAll">
-          {{ refreshing ? "Refreshing…" : "Refresh" }}
+          {{ refreshing ? t('accounts.refreshing') : t('accounts.refresh') }}
         </button>
       </div>
     </div>
@@ -248,8 +266,8 @@ onMounted(() => {
     <div class="wb-card mb-4 p-4">
       <ToggleSwitch
         :model-value="autoOn"
-        label="Auto-select account"
-        hint="Allocate requests across accounts: credits that expire soonest are spent first, and one account serves a conversation (30 min of inactivity resets it). The manual selection below stays as a fallback but switching is disabled. An explicit account key in an API request still wins."
+        :label="t('accounts.autoSelect')"
+        :hint="t('accounts.autoSelectHint')"
         :disabled="busy"
         @update:model-value="setAuto"
       />
@@ -259,8 +277,7 @@ onMounted(() => {
     <div v-if="totals.reported > 0" class="wb-card mb-4 p-4">
       <div class="mb-2 flex items-baseline justify-between">
         <div class="text-[12px]" :style="{ color: 'var(--wb-muted)' }">
-          Credits remaining across {{ totals.reported }}
-          {{ totals.reported === 1 ? "account" : "accounts" }}
+          {{ t('accounts.creditsRemaining', { count: String(totals.reported) }) }}
         </div>
         <div>
           <span class="text-[17px] font-semibold" :style="{ color: 'var(--wb-ok)' }">{{ num(totals.remain) }}</span>
@@ -275,7 +292,7 @@ onMounted(() => {
         }" />
       </div>
       <div class="text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-        {{ num(totals.remain) }} / {{ num(totals.size) }} credits
+        {{ t('accounts.creditsOfTotal', { remain: num(totals.remain), size: num(totals.size) }) }}
       </div>
     </div>
 
@@ -287,9 +304,9 @@ onMounted(() => {
     </p>
 
     <div v-if="!hasAccounts" class="wb-card p-6 text-center">
-      <div class="mb-3 text-[13px]">No {{ regionLabel(region) }} accounts yet.</div>
+      <div class="mb-3 text-[13px]">{{ t('accounts.noAccounts', { region: regionLabel(region) }) }}</div>
       <button class="wb-btn wb-btn-primary" @click="navigate('login')">
-        {{ region === "intl" ? "Sign in via browser" : "Sign in with QR code" }}
+        {{ region === "intl" ? t('accounts.signInBrowser') : t('accounts.signInQR') }}
       </button>
     </div>
 
@@ -301,13 +318,13 @@ onMounted(() => {
         <div class="mb-2 flex flex-wrap items-center gap-2">
           <span class="text-[13.5px] font-medium">{{ a.label }}</span>
           <span v-if="a.active" class="rounded px-1.5 py-0.5 text-[10px] font-semibold"
-            :style="{ background: 'var(--wb-ok)', color: '#08130c' }">SELECTED</span>
+            :style="{ background: 'var(--wb-ok)', color: '#08130c' }">{{ t('accounts.selected') }}</span>
           <span v-if="a.auto" class="rounded px-1.5 py-0.5 text-[10px] font-semibold"
-            :style="{ background: 'var(--wb-accent-soft)', color: 'var(--wb-accent)' }">AUTO</span>
+            :style="{ background: 'var(--wb-accent-soft)', color: 'var(--wb-accent)' }">{{ t('accounts.auto') }}</span>
           <span v-if="a.expired" class="rounded px-1.5 py-0.5 text-[10px] font-semibold"
-            :style="{ background: 'var(--wb-warn)', color: '#1a1405' }">TOKEN EXPIRED</span>
+            :style="{ background: 'var(--wb-warn)', color: '#1a1405' }">{{ t('accounts.tokenExpired') }}</span>
           <span class="ml-auto text-[11px]" :style="{ color: 'var(--wb-muted)' }">
-            until {{ shortDate(new Date(a.expiresAt ?? 0).toISOString()) }}
+            {{ t('accounts.expiresUntil', { date: shortDate(new Date(a.expiresAt ?? 0).toISOString()) }) }}
           </span>
         </div>
 
@@ -316,9 +333,11 @@ onMounted(() => {
           <template v-if="a.usage">
             <div class="mb-1 flex items-baseline justify-between">
               <span class="text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-                {{ num(a.usage.remain) }} / {{ num(a.usage.size) }} credits ·
-                {{ packagesOf(a).length }}
-                {{ packagesOf(a).length === 1 ? "package" : "packages" }}
+                {{ t('accounts.creditsOfTotalWithPackages', {
+                  remain: num(a.usage.remain),
+                  size: num(a.usage.size),
+                  packages: t('accounts.packages', { count: String(packagesOf(a).length) }),
+                }) }}
               </span>
               <span class="whitespace-nowrap">
                 <span class="text-[13px] font-semibold" :style="{ color: 'var(--wb-ok)' }">{{ num(a.usage.remain) }}</span>
@@ -334,20 +353,20 @@ onMounted(() => {
             </div>
           </template>
           <span v-else class="text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-            quota unavailable<span v-if="a.usageError"> — {{ a.usageError }}</span>
+            {{ t('accounts.quotaUnavailable') }}<span v-if="a.usageError"> — {{ a.usageError }}</span>
           </span>
         </div>
 
         <div class="mb-3 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-          <span :style="{ color: a.checkin?.state === 'claimed' ? 'var(--wb-ok)' : undefined }">
+          <span v-if="checkinEnabledFor(a)" :style="{ color: a.checkin?.state === 'claimed' ? 'var(--wb-ok)' : undefined }">
             {{ checkinLabel(a) }}
           </span>
-          <span> · key <code class="wb-mono">{{ a.key }}</code></span>
+          <span> · {{ t('accounts.keyLabel') }} <code class="wb-mono">{{ a.key }}</code></span>
         </div>
 
         <p v-if="a.refreshError" class="mb-2 text-[11px]"
           :style="{ color: 'var(--wb-danger)' }">
-          Session refresh failed: {{ a.refreshError }}
+          {{ t('accounts.sessionRefreshFailed', { error: a.refreshError }) }}
         </p>
 
         <!-- Actions -->
@@ -358,40 +377,34 @@ onMounted(() => {
             :title="autoOn ? 'Auto-select is on — requests are allocated automatically' : undefined"
             @click="switchTo(a.key)"
           >
-            {{ a.active ? "Selected" : autoOn ? "Auto" : "Use this account" }}
+            {{ a.active ? t('accounts.selected') : autoOn ? t('accounts.auto') : t('accounts.switchTo') }}
           </button>
           <button
+            v-if="checkinEnabledFor(a)"
             class="wb-btn"
             :disabled="busy || isClaimed(a)"
             @click="checkinOne(a.key)"
           >
             {{
               checkingKey === a.key
-                ? "Checking in…"
+                ? t('accounts.refreshing')
                 : isClaimed(a)
-                  ? "Checked in"
-                  : "Check in"
+                  ? t('accounts.checkinDone')
+                  : t('accounts.checkin')
             }}
           </button>
           <button
             class="wb-btn"
             :disabled="!a.usage"
-            :title="
-              a.usage
-                ? undefined
-                : a.usageError
-                  ? `Quota unavailable — ${a.usageError}. Click Refresh to retry.`
-                  : 'Quota has not been read yet. Click Refresh.'
-            "
             @click="toggle(a.key)"
           >
-            {{ expanded[a.key] ? "Hide packages" : `Packages (${packagesOf(a).length})` }}
+            {{ expanded[a.key] ? "Hide packages" : t('accounts.packages', { count: String(packagesOf(a).length) }) }}
           </button>
           <button class="wb-btn" @click="copy(a.key, a.key)">
-            {{ copied === a.key ? "Copied" : "Copy key" }}
+            {{ copied === a.key ? t('accounts.copied') : t('accounts.copiedKey') }}
           </button>
           <button class="wb-btn wb-btn-danger" :disabled="busy" @click="remove(a.key, a.label)">
-            Sign out
+            {{ t('accounts.logout') }}
           </button>
         </div>
 
@@ -411,7 +424,7 @@ onMounted(() => {
               <tbody>
                 <tr v-if="packagesOf(a).length === 0">
                   <td colspan="4" :style="{ color: 'var(--wb-muted)' }">
-                    No packages on this account.
+                    {{ t('accounts.noPackages') }}
                   </td>
                 </tr>
                 <tr
@@ -420,7 +433,7 @@ onMounted(() => {
                   :style="isDepleted(pkg) ? { opacity: 0.55 } : undefined"
                 >
                   <td>
-                    {{ pkg.packageName || "(unnamed)" }}
+                    {{ pkg.packageName || t('accounts.unnamedPackage') }}
                     <span v-if="pkg.packageCode" class="wb-mono ml-1"
                       :style="{ color: 'var(--wb-muted)' }">{{ pkg.packageCode }}</span>
                     <span v-if="isDepleted(pkg)"
@@ -456,16 +469,16 @@ onMounted(() => {
       </p>
     </div>
     <p v-else-if="state" class="mt-4 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-      {{ state.models.length }} models offered ·
-      {{ state.excludedModels.length }} withheld
-      (image / video generation, internal helper models, or models you turned off — switch any
-      of them on under Models).
+      {{ t('accounts.catalogSummary', {
+        offered: String(state.models.length),
+        withheld: String(state.excludedModels.length),
+      }) }}
     </p>
 
     <!-- Setup help, deliberately last -->
     <details v-if="hasAccounts" class="mt-5">
       <summary class="cursor-pointer text-[12px]" :style="{ color: 'var(--wb-muted)' }">
-        Using these accounts from a client
+        {{ t('accounts.clientHelp') }}
       </summary>
       <div class="wb-card mt-2 p-4">
         <p class="mb-3 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">

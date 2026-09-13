@@ -20,6 +20,9 @@ import { refreshState, region, regionLabel } from "../lib/store";
 import { countdown } from "../lib/format";
 import { runtimeConfig } from "../lib/config";
 import { navigate } from "../lib/router";
+import { useI18n } from "../lib/i18n";
+
+const { t } = useI18n();
 
 type Phase = "idle" | "waiting" | "success" | "expired" | "error";
 
@@ -51,7 +54,7 @@ async function expire(): Promise<void> {
   if (phase.value !== "waiting") return;
   stop();
   phase.value = "expired";
-  message.value = "This code expired — start again to get a fresh one.";
+  message.value = t("login.expired");
 }
 
 // React to global region changes: reset the in-flight login so a stale
@@ -92,9 +95,8 @@ async function poll(): Promise<void> {
 async function succeed(nickname?: string): Promise<void> {
   stop();
   phase.value = "success";
-  message.value = nickname ? `Signed in as ${nickname}` : "Signed in";
+  message.value = nickname ? t("login.signedInAs", { nickname }) : t("login.signedIn");
   await refreshState();
-  // Back to Accounts, where the new account now appears and can be selected.
   window.setTimeout(() => navigate("accounts"), 700);
 }
 
@@ -120,7 +122,7 @@ async function begin(): Promise<void> {
   copied.value = false;
   qrSvg.value = "";
   phase.value = "waiting";
-  message.value = "Requesting a sign-in link…";
+  message.value = t("login.requestingLink");
 
   let start: LoginStart;
   try {
@@ -139,10 +141,10 @@ async function begin(): Promise<void> {
       width: 176,
       errorCorrectionLevel: "M",
     });
-    message.value = "Waiting for the scan…";
+    message.value = t("login.waitingScan");
   } else {
     openUrl(start.authUrl);
-    message.value = "Complete the sign-in in your browser…";
+    message.value = t("login.completeInBrowser");
   }
   pollIntervalMs = Math.max(1000, start.pollIntervalMs);
   expiresAt.value = Date.now() + start.expiresInMs;
@@ -181,10 +183,10 @@ onBeforeUnmount(stop);
   <section class="mx-auto max-w-[600px] p-5">
     <div class="mb-4">
       <h1 class="text-[15px] font-semibold">
-        Add account <span class="wb-pill ml-1">{{ regionLabel(region) }}</span>
+        {{ t('login.title') }} <span class="wb-pill ml-1">{{ regionLabel(region) }}</span>
       </h1>
       <p class="mt-0.5 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-        Switch the region in the sidebar to sign in to the other cluster.
+        {{ t('login.regionHint') }}
       </p>
     </div>
 
@@ -201,7 +203,7 @@ onBeforeUnmount(stop);
         </div>
         <div class="min-w-0 flex-1">
           <div class="mb-1 text-[12.5px] font-medium">
-            Scan with the WorkBuddy app
+            {{ t('login.scanQR') }}
           </div>
           <div
             class="wb-mono mb-3 break-all"
@@ -210,12 +212,12 @@ onBeforeUnmount(stop);
             {{ authUrl }}
           </div>
           <div class="flex flex-wrap gap-2">
-            <button class="wb-btn" @click="openExternally">Open in browser</button>
+            <button class="wb-btn" @click="openExternally">{{ t('login.openInBrowser') }}</button>
             <button class="wb-btn" @click="copyUrl">
-              {{ copied ? "Copied" : "Copy link" }}
+              {{ copied ? t('login.copiedUrl') : t('login.copyUrl') }}
             </button>
             <button v-if="phase !== 'waiting'" class="wb-btn wb-btn-primary" @click="void begin()">
-              Start again
+              {{ t('login.tryAgain') }}
             </button>
           </div>
           <div class="mt-3 flex items-center gap-2 text-[12px]">
@@ -244,13 +246,10 @@ onBeforeUnmount(stop);
       <div v-else>
         <div class="mb-3 text-[12.5px]">
           <template v-if="isIntl">
-            Sign in opens the global login page in your browser, where you
-            pick Google, GitHub or X. This page polls until it completes.
+            {{ t('login.completeInBrowser') }}
           </template>
           <template v-else>
-            Scan to add another WorkBuddy account. Managing the accounts
-            you already have happens on the
-            <a href="#/accounts" class="underline">Accounts</a> page.
+            {{ t('login.scanQR') }}
           </template>
         </div>
         <button
@@ -259,7 +258,7 @@ onBeforeUnmount(stop);
           :disabled="phase === 'waiting'"
           @click="void begin()"
         >
-          {{ isIntl ? "Open sign-in page" : "Sign in with QR code" }}
+          {{ isIntl ? t('login.openInBrowser') : t('login.scanQR') }}
         </button>
         <div v-else class="mt-3 break-all font-mono text-[11px]" :style="{ color: 'var(--wb-muted)' }">
           {{ authUrl }}

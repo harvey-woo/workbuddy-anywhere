@@ -19,6 +19,9 @@ import {
 } from "../lib/store";
 import { compact } from "../lib/format";
 import ToggleSwitch from "../components/ToggleSwitch.vue";
+import { useI18n } from "../lib/i18n";
+
+const { t } = useI18n();
 
 const filter = ref("");
 const newId = ref("");
@@ -70,9 +73,9 @@ const filtered = computed(() => {
 
 /** Short reason a row sits off, shown as a tag next to the switch. */
 function offReason(row: ModelRow): string {
-  if (row.reason === "blocked") return "off by you";
-  if (row.reason === "helper") return "internal helper model";
-  return "image / video generation";
+  if (row.reason === "blocked") return t("models.offBlocked");
+  if (row.reason === "helper") return t("models.offHelper");
+  return t("models.offMedia");
 }
 
 /**
@@ -128,10 +131,9 @@ function costLabel(raw: string | undefined): string {
 const sourceNote = computed(() => {
   const s = state.value;
   if (!s) return "";
-  /* region matched */
-  if (s.modelsSource === "auth") return "From your account's /v3/config.";
-  if (s.modelsSource === "anonymous") return "Public catalog — anonymous /v3/config (sign in to scope it to an account).";
-  return "Could not reach /v3/config; showing only custom models.";
+  if (s.modelsSource === "auth") return t("models.sourceFromAccount");
+  if (s.modelsSource === "anonymous") return t("models.sourcePublic");
+  return t("models.sourceUnavailable");
 });
 
 async function withBusy(label: string, fn: () => Promise<void>): Promise<void> {
@@ -177,22 +179,22 @@ const setEnabled = (value: boolean): Promise<void> =>
     <div class="mb-4 flex items-start justify-between gap-3">
       <div>
         <h1 class="text-[15px] font-semibold">
-          Models <span class="wb-pill ml-1">{{ regionLabel(region) }}</span>
+          {{ t('models.title') }} <span class="wb-pill ml-1">{{ regionLabel(region) }}</span>
         </h1>
         <p class="mt-0.5 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-          Switch the region in the sidebar to inspect the other cluster.
+          {{ t('models.regionHint') }}
         </p>
       </div>
       <button class="wb-btn" :disabled="!!busyLabel" @click="refresh">
-        {{ busyLabel === "refresh" ? "Refreshing…" : "Refresh from server" }}
+        {{ busyLabel === "refresh" ? t('models.refreshing') : t('models.refreshFromServer') }}
       </button>
     </div>
 
     <div class="wb-card mb-4 p-4">
       <ToggleSwitch
         :model-value="settings?.enabled ?? true"
-        label="Offer WorkBuddy models to the host"
-        hint="Off = hidden from the model picker in every host."
+        :label="t('models.offerToHost')"
+        :hint="t('models.offerHint')"
         :disabled="!!busyLabel"
         @update:model-value="setEnabled"
       />
@@ -201,16 +203,14 @@ const setEnabled = (value: boolean): Promise<void> =>
     <div class="wb-card mb-4 p-4">
       <div class="mb-2 flex items-baseline justify-between">
         <div class="text-[12.5px] font-medium">
-          Models
-          <span class="wb-pill ml-1">{{ models.length }} on</span>
-          <span v-if="offCount" class="wb-pill ml-1">{{ offCount }} off</span>
+          {{ t('models.title') }}
+          <span class="wb-pill ml-1">{{ t('models.modelCount', { count: String(models.length) }) }}</span>
+          <span v-if="offCount" class="wb-pill ml-1">{{ t('models.offCount', { count: String(offCount) }) }}</span>
         </div>
-        <input v-model="filter" class="wb-input max-w-[220px]" placeholder="Filter by id or name" />
+        <input v-model="filter" class="wb-input max-w-[220px]" :placeholder="t('models.filterPlaceholder')" />
       </div>
       <div class="text-[11.5px] mb-3" :style="{ color: 'var(--wb-muted)' }"
-        >{{ sourceNote }} Greyed rows are off: they are image / video generators or internal
-        helper models, or you turned them off. Switching one on force-adds it to the list every
-        host receives; switching one off force-removes it.</div
+        >{{ sourceNote }} {{ t('models.sourceNote') }}</div
       >
       <!-- min-w-max + overflow-x-auto: the table keeps its natural column
            widths so capabilities pills never wrap; the wrapper scrolls
@@ -219,11 +219,11 @@ const setEnabled = (value: boolean): Promise<void> =>
         <table class="wb-table min-w-max">
           <thead>
             <tr>
-              <th>Model</th>
-              <th>Context</th>
-              <th class="whitespace-nowrap">Capabilities</th>
-              <th>Cost</th>
-              <th class="text-right">On</th>
+              <th>{{ t('models.colModel') }}</th>
+              <th>{{ t('models.colContext') }}</th>
+              <th class="whitespace-nowrap">{{ t('models.colCapabilities') }}</th>
+              <th>{{ t('models.colCost') }}</th>
+              <th class="text-right">{{ t('models.colOn') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -239,7 +239,7 @@ const setEnabled = (value: boolean): Promise<void> =>
                     :disabled="!!busyLabel"
                     @click="remove(row.id)"
                   >
-                    Remove
+                    {{ t('models.remove') }}
                   </button>
                 </div>
               </td>
@@ -254,16 +254,16 @@ const setEnabled = (value: boolean): Promise<void> =>
                   class="wb-pill mr-1"
                   :class="{ 'wb-pill-on': row.model.capabilities.toolCalling }"
                 >
-                  tools
+                  {{ t('models.capTools') }}
                 </span>
                 <span
                   class="wb-pill mr-1"
                   :class="{ 'wb-pill-on': row.model.capabilities.imageInput }"
                 >
-                  vision
+                  {{ t('models.capVision') }}
                 </span>
                 <span class="wb-pill" :class="{ 'wb-pill-on': row.model.capabilities.reasoning }">
-                  thinking
+                  {{ t('models.capThinking') }}
                 </span>
                 <span v-if="row.model.reasoningConfig?.defaultEffort" class="wb-pill ml-1">
                   {{ row.model.reasoningConfig.defaultEffort }}
@@ -281,7 +281,7 @@ const setEnabled = (value: boolean): Promise<void> =>
               </td>
             </tr>
             <tr v-if="filtered.length === 0">
-              <td colspan="5" :style="{ color: 'var(--wb-muted)' }">No models match.</td>
+              <td colspan="5" :style="{ color: 'var(--wb-muted)' }">{{ t('models.noMatch') }}</td>
             </tr>
           </tbody>
         </table>
@@ -289,22 +289,21 @@ const setEnabled = (value: boolean): Promise<void> =>
     </div>
 
     <div class="wb-card p-4">
-      <div class="mb-2 text-[12.5px] font-medium">Custom model IDs</div>
+      <div class="mb-2 text-[12.5px] font-medium">{{ t('models.customIds') }}</div>
       <div class="mb-3 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-        For models the server list does not mention. Custom entries are assumed to
-        support tool calls but not images.
+        {{ t('models.customIdsHint') }}
       </div>
       <div class="flex flex-wrap items-end gap-2">
         <div class="min-w-[180px] flex-1">
-          <label class="wb-label">Model ID</label>
-          <input v-model="newId" class="wb-input" placeholder="e.g. hy4-preview" />
+          <label class="wb-label">{{ t('models.modelId') }}</label>
+          <input v-model="newId" class="wb-input" :placeholder="t('models.modelIdPlaceholder')" />
         </div>
         <div class="min-w-[140px] flex-1">
-          <label class="wb-label">Display name</label>
-          <input v-model="newName" class="wb-input" placeholder="optional" />
+          <label class="wb-label">{{ t('models.displayName') }}</label>
+          <input v-model="newName" class="wb-input" :placeholder="t('models.displayNamePlaceholder')" />
         </div>
         <button class="wb-btn wb-btn-primary" :disabled="!newId.trim() || !!busyLabel" @click="add">
-          Add
+          {{ t('models.add') }}
         </button>
       </div>
       <div v-if="settings?.customModels?.length" class="mt-3 flex flex-wrap gap-2">

@@ -10,16 +10,18 @@ import type { ThinkingEffort } from "@core/settings";
 import { call } from "../lib/client";
 import { refreshState, run, settings } from "../lib/store";
 import { runtimeConfig } from "../lib/config";
+import { useI18n } from "../lib/i18n";
 
+const { t } = useI18n();
 const cfg = runtimeConfig();
 const notice = ref("");
 
-const EFFORTS: Array<{ value: ThinkingEffort; label: string; hint: string }> = [
-  { value: "auto", label: "Auto", hint: "Per-model default from the server" },
-  { value: "low", label: "Low", hint: "Minimal thinking, fastest" },
-  { value: "medium", label: "Medium", hint: "Balanced thinking" },
-  { value: "high", label: "High", hint: "Deep thinking, slower" },
-  { value: "off", label: "Off", hint: "Disable reasoning entirely" },
+const EFFORTS: Array<{ value: ThinkingEffort; key: string }> = [
+  { value: "auto", key: "effort.auto" },
+  { value: "low", key: "effort.low" },
+  { value: "medium", key: "effort.medium" },
+  { value: "high", key: "effort.high" },
+  { value: "off", key: "effort.off" },
 ];
 
 const visionSources = ref<string[]>([]);
@@ -37,7 +39,7 @@ async function save(patch: Record<string, unknown>, label: string): Promise<void
     await call("updateSettings", patch);
     await refreshState();
   });
-  if (ok !== undefined) notice.value = `${label} saved`;
+  if (ok !== undefined) notice.value = t("settings.saved", { label });
   window.setTimeout(() => (notice.value = ""), 2000);
 }
 
@@ -93,15 +95,11 @@ onMounted(loadVisionModels);
 
 <template>
   <section class="mx-auto max-w-[780px] p-5">
-    <!-- Settings are GLOBAL (thinking effort, vision fallback, auto-select,
-         curl example) — not scoped to one cluster — so there is no region
-         pill in the header. The header still follows the same h1 + muted
-         description shape as the region-scoped pages. -->
     <div class="mb-4 flex items-start justify-between gap-3">
       <div>
-        <h1 class="text-[15px] font-semibold">Settings</h1>
+        <h1 class="text-[15px] font-semibold">{{ t('settings.title') }}</h1>
         <p class="mt-0.5 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-          These options apply to both clusters.
+          {{ t('settings.regionHint') }}
         </p>
       </div>
       <span v-if="notice" class="text-[11.5px]" :style="{ color: 'var(--wb-ok)' }">
@@ -110,33 +108,28 @@ onMounted(loadVisionModels);
     </div>
 
     <div class="wb-card mb-4 p-4">
-      <label class="wb-label">Thinking effort</label>
+      <label class="wb-label">{{ t('settings.thinkingEffort') }}</label>
       <div class="mb-2 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-        {{
-          EFFORTS.find((e) => e.value === settings?.thinkingEffort)?.hint ??
-          "Per-model default from the server"
-        }}
+        {{ t('settings.thinkingHint') }}
       </div>
       <select
         class="wb-select"
         :value="settings?.thinkingEffort ?? 'auto'"
-        @change="save({ thinkingEffort: ($event.target as HTMLSelectElement).value }, 'Thinking effort')"
+        @change="save({ thinkingEffort: ($event.target as HTMLSelectElement).value }, t('settings.thinkingEffort'))"
       >
         <option v-for="effort in EFFORTS" :key="effort.value" :value="effort.value">
-          {{ effort.label }} — {{ effort.hint }}
+          {{ t(effort.key) }}
         </option>
       </select>
       <div class="mt-2 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-        Per-model overrides from the host's model configuration menu take priority.
+        {{ t('settings.thinkingHint') }}
       </div>
     </div>
 
     <div class="wb-card mb-4 p-4">
-      <label class="wb-label">Vision fallback model</label>
+      <label class="wb-label">{{ t('settings.visionFallback') }}</label>
       <div class="mb-2 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-        When the selected model cannot accept images, this model describes them
-        instead. Candidates come from
-        <span class="wb-mono">{{ visionSourceLabel }}</span>.
+        {{ t('settings.visionHint', { source: visionSourceLabel }) }}
       </div>
       <select
         class="wb-select"
@@ -144,13 +137,13 @@ onMounted(loadVisionModels);
         @change="
           save(
             { visionFallbackModel: ($event.target as HTMLSelectElement).value },
-            'Vision fallback model'
+            t('settings.visionFallback')
           )
         "
       >
-        <option value="">Auto — first available model</option>
+        <option value="">{{ t('settings.visionAuto') }}</option>
         <option v-if="visionStale" :value="currentVision">
-          {{ currentVision }} (not offered by this host)
+          {{ currentVision }} {{ t('settings.visionNotOffered') }}
         </option>
         <option v-for="m in visionModels" :key="m.id" :value="m.id">
           {{ m.label }} — {{ m.id }} ({{ m.source }})
@@ -161,8 +154,7 @@ onMounted(loadVisionModels);
         class="mt-2 text-[11.5px]"
         :style="{ color: 'var(--wb-muted)' }"
       >
-        No image-describing model is available here, so an image sent to a
-        non-vision model cannot be described.
+        {{ t('settings.visionUnavailable') }}
       </div>
     </div>
 
@@ -172,20 +164,16 @@ onMounted(loadVisionModels);
       browser to see every route and payload.
     -->
     <div v-if="cfg.transport !== 'vscode'" class="wb-card mb-4 p-4">
-      <div class="mb-2 text-[12.5px] font-medium">Using WorkBuddy from another tool</div>
+      <div class="mb-2 text-[12.5px] font-medium">{{ t('settings.apiTitle') }}</div>
       <p class="text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-        WorkBuddy serves an OpenAI-compatible API on this machine — sign in
-        here once, then point any HTTP-capable client (Claude Code,
-        OpenAI&nbsp;SDK, curl, your editor's AI assistant) at the base URL
-        printed on the Accounts page and use an account key as the bearer
-        token. Pick the matching regional path for international accounts.
+        {{ t('settings.apiHint') }}
       </p>
       <button
         type="button"
         class="wb-btn wb-btn-primary mt-3"
         @click="openExternal('https://github.com/harvey-woo/workbuddy-anywhere#api')"
       >
-        Open the API docs ↗
+        {{ t('settings.apiDocs') }}
       </button>
     </div>
   </section>
