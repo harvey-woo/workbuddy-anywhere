@@ -89,11 +89,14 @@ const options = {
  */
 async function verify() {
   const emitted = await readFile(outfile, "utf8");
-  if (emitted.includes("@wbaw/core")) {
+  // Check for actual import/require of @wbaw/core, not string literals in
+  // error messages (e.g. "run: yarn workspace @wbaw/core ui:build").
+  const hasImport = /(?:import|require)\s*(?:\(|\S.*from\s*)["']@wbaw\/core["']/.test(emitted);
+  if (hasImport) {
     console.error(
-      `[esbuild] ${path.relative(here, outfile)} still references "@wbaw/core".\n` +
-        `          The release would not install. Check for an unresolvable\n` +
-        `          (non-literal) import of @wbaw/core that esbuild could not inline.`
+      `[esbuild] ${path.relative(here, outfile)} has unresolved import of "@wbaw/core".\n` +
+        `          The release would not install. Check for a non-literal import\n` +
+        `          that esbuild could not inline.`
     );
     process.exit(1);
   }

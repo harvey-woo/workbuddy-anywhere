@@ -14,7 +14,7 @@ import * as net from "node:net";
 import * as path from "node:path";
 import { BrowserWindow, Menu, Tray, app, nativeImage, shell } from "electron";
 import { startApiServer, type ApiServerHandle } from "@wbaw/core";
-import { installRpcBridge, IPC_INVOKE, type ServerState } from "./ipc";
+import { installRpcBridge, type ServerState } from "./ipc";
 import { createDesktopService } from "./service";
 import { createTray, type TrayRoute } from "./tray";
 
