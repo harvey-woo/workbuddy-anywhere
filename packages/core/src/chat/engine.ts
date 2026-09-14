@@ -255,7 +255,45 @@ export async function buildOpenAIMessages(
     pendingToolCallIdx.delete(callId);
   }
 
-  return oaiMessages;
+  return ensureLeadingSystemMessage(oaiMessages);
+}
+
+/**
+ * Guarantee the payload starts with a `system` message.
+ *
+ * The INTL gateway REJECTS a payload whose first message is not `system`:
+ *
+ *   400 {"code":11128,"msg":"first message is not system prompt"}
+ *
+ * That is not a hypothetical — it is why chat through the `codebuddy-intl`
+ * vendor failed outright while CN worked. Measured 2026-09-14 with a live
+ * account, same prompt, only the first role changed:
+ *
+ *   intl  user   first → 400 / 11128
+ *   intl  system first → 200, stream OK
+ *   intl  EMPTY  system first → 200, stream OK   ← empty is enough
+ *   cn    user   first → 200, stream OK          (baseline; CN is tolerant)
+ *   cn    system first → 200, stream OK          ← CN accepts it too
+ *
+ * CN tolerating it is what makes this unconditional instead of region-gated:
+ * one code path, no branch to get wrong, and the HTTP server / dsh hosts —
+ * which already supply a real system prompt — are untouched because the guard
+ * only fires when the leading message is not already `system`.
+ *
+ * The inserted message is EMPTY on purpose. VS Code folds its system prompt
+ * into the first user message (see `ChatMessage.role` in chat/types.ts), so
+ * there is no prompt text to forward here, and inventing one would override
+ * the editor's own instructions. The gateway wants the SHAPE; an empty string
+ * satisfies it without changing what the model is told.
+ *
+ * `scripts/probe-intl-system-prompt.cjs` re-runs the measurement above.
+ */
+function ensureLeadingSystemMessage(oaiMessages: OpenAIMessage[]): OpenAIMessage[] {
+  // A payload with no messages is invalid on its own terms; adding a lone
+  // system message would not make it a valid request.
+  if (oaiMessages.length === 0) return oaiMessages;
+  if (oaiMessages[0].role === "system") return oaiMessages;
+  return [{ role: "system", content: "" }, ...oaiMessages];
 }
 
 export function buildChatHeaders(auth: WorkbuddyAuth): Record<string, string> {

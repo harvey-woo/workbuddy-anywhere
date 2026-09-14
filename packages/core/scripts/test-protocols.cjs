@@ -19,12 +19,28 @@ const path = require("path");
 const { pathToFileURL } = require("url");
 
 const OUT = path.join(__dirname, "..", "out", "server");
+/** The chat engine lives outside `server/`; the payload builder is there. */
+const CHAT_OUT = path.join(__dirname, "..", "out", "chat");
 
 let passed = 0;
 let failed = 0;
 function test(name, fn) {
   try {
-    fn();
+    const result = fn();
+    // Async assertions are supported: an unhandled rejection would otherwise
+    // be reported as "ok" and the guarantee would go untested.
+    if (result && typeof result.then === "function") {
+      return result.then(
+        () => {
+          passed += 1;
+          console.log(`  ok  ${name}`);
+        },
+        (err) => {
+          failed += 1;
+          console.log(`  FAIL ${name}\n       ${err.message}`);
+        }
+      );
+    }
     passed += 1;
     console.log(`  ok  ${name}`);
   } catch (err) {
@@ -328,6 +344,81 @@ async function main() {
     assert.throws(() => messages.toAnthropicChatRequest({ model: "m", messages: [] }));
     assert.throws(() => responses.toResponsesChatRequest({ model: "m" }));
     assert.throws(() => messages.toAnthropicChatRequest({ messages: [{ role: "user", content: "x" }] }));
+  });
+
+  // ── the wire payload's leading system message ─────────────────────────
+  //
+  // The INTL gateway rejects a payload whose first message is not `system`:
+  //
+  //   400 {"code":11128,"msg":"first message is not system prompt"}
+  //
+  // VS Code folds its system prompt into the first USER message, so nothing
+  // upstream guarantees the shape. These tests pin the guarantee. The
+  // behaviour was measured against the live gateway by
+  // `scripts/probe-intl-system-prompt.cjs`.
+  console.log("chat payload: leading system message");
+
+  const engine = await import(pathToFileURL(path.join(CHAT_OUT, "engine.js")).href);
+  const baseOpts = { model: undefined, settings: {} };
+  const build = (messages) => engine.buildOpenAIMessages(messages, baseOpts);
+
+  await test("a user-first transcript gets a system message prepended", async () => {
+    const out = await build([{ role: "user", text: "hi" }]);
+    assert.strictEqual(out.length, 2, "expected system + the original message");
+    assert.strictEqual(out[0].role, "system");
+    assert.strictEqual(out[1].role, "user");
+    assert.strictEqual(out[1].content, "hi", "the original message must be untouched");
+  });
+
+  await test("the prepended message is EMPTY — it must not invent a prompt", async () => {
+    // VS Code's system prompt is already inside the first user message.
+    // Injecting text here would override the editor's own instructions.
+    const out = await build([{ role: "user", text: "hi" }]);
+    assert.strictEqual(out[0].content, "");
+  });
+
+  await test("an existing system message is left alone (no double system)", async () => {
+    // The HTTP server and dsh hosts DO supply a real system prompt; a second
+    // one would be both redundant and a behaviour change for them.
+    const out = await build([
+      { role: "system", text: "be terse" },
+      { role: "user", text: "hi" },
+    ]);
+    assert.strictEqual(out.length, 2, "nothing should have been inserted");
+    assert.strictEqual(out[0].content, "be terse", "the real prompt must survive");
+  });
+
+  await test("an empty transcript is not given a lone system message", async () => {
+    // A request with no messages is invalid on its own terms; a system-only
+    // payload would not make it valid, and would hide the real problem.
+    const out = await build([]);
+    assert.deepStrictEqual(out, []);
+  });
+
+  await test("a tool-result-first transcript also gets the system message", async () => {
+    // Not reachable from VS Code today, but the guarantee is about position,
+    // not about which role happens to be first.
+    const out = await build([
+      { role: "assistant", toolCalls: [{ id: "c1", name: "read", input: {} }] },
+      { role: "tool", toolResults: [{ callId: "c1", text: "ok" }] },
+    ]);
+    assert.strictEqual(out[0].role, "system");
+    // …and the call/result adjacency the engine guarantees is still intact.
+    const callIdx = out.findIndex((m) => m.role === "assistant");
+    assert.strictEqual(out[callIdx + 1].role, "tool", "result must stay adjacent to its call");
+  });
+
+  await test("the guard runs AFTER mending, so an orphaned call is still mended", async () => {
+    // Ordering matters: the orphan repair inserts a message at index 0 + 1 when
+    // the very first message issues an un-answered tool call. Prepending the
+    // system message afterwards (rather than before) keeps that splice valid.
+    const out = await build([
+      { role: "assistant", toolCalls: [{ id: "orphan", name: "read", input: {} }] },
+    ]);
+    assert.strictEqual(out[0].role, "system");
+    assert.strictEqual(out[1].role, "assistant");
+    assert.strictEqual(out[2].role, "tool", "the orphan must still be mended");
+    assert.strictEqual(out[2].tool_call_id, "orphan");
   });
 
   console.log(`\n${passed} passed, ${failed} failed`);
