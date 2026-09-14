@@ -1,6 +1,6 @@
 {
   "name": "@wbaw/dsh-workbuddy",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "WorkBuddy Anywhere for DeepSeek Harness: use WorkBuddy models in dsh chat, with the shared multi-account management page served inside dsh Settings.",
   "license": "MIT",
   "type": "module",

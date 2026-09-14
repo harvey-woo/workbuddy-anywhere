@@ -36,3 +36,7 @@ packages/desktop/main.js
 # Keep them on disk; the release zip is the actual delivery artifact.
 release-*/
 workbuddy-anywhere-*.zip
+# A raw `npm pack` inside the plugin dir drops the tarball next to the source.
+# `yarn release:dsh` packs into `.release-pack/` and renames into `release-*/`,
+# so anything here is a stray — keep it, do not commit it.
+packages/dsh/*.tgz
