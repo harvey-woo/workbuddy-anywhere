@@ -65,7 +65,17 @@ const disposable = (fn) => {
   return d;
 };
 
-const registered = { provider: undefined, vendor: undefined, commands: new Map() };
+const registered = {
+  // EVERY registration, by vendor. The extension registers two (CN + Global),
+  // and keeping only the last one made the assertion below depend on source
+  // order: it read "the last registered vendor is codebuddy" while the code
+  // registers codebuddy FIRST and codebuddy-intl second, so it could never
+  // pass. A Map keyed by vendor says what the test actually means.
+  providers: new Map(),
+  /** Pinned to the CN provider so downstream checks do not race source order. */
+  provider: undefined,
+  commands: new Map(),
+};
 const statusBar = { text: "", tooltip: undefined, shown: false, command: undefined };
 const panels = [];
 const settings = {
@@ -121,6 +131,9 @@ const partClass = (name) => {
 
 const vscode = {
   StatusBarAlignment: { Left: 1, Right: 2 },
+  // Values match the real enum: the status bar compares by value, so the mock
+  // must not invent a different ordering or the palette picks the wrong theme.
+  ColorThemeKind: { Light: 1, Dark: 2, HighContrast: 3, HighContrastLight: 4 },
   ConfigurationTarget: { Global: 1, Workspace: 2 },
   ViewColumn: { Active: -1, One: 1 },
   LanguageModelChatMessageRole: { User: 1, Assistant: 2 },
@@ -153,13 +166,14 @@ const vscode = {
   },
   lm: {
     registerLanguageModelChatProvider(vendor, provider) {
-      registered.vendor = vendor;
-      registered.provider = provider;
+      registered.providers.set(vendor, provider);
       return disposable();
     },
     selectChatModels: async () => [],
   },
   window: {
+    activeColorTheme: { kind: 2 /* Dark */ },
+    onDidChangeActiveColorTheme: () => disposable(),
     createOutputChannel: () => ({ appendLine: () => {}, dispose: () => {} }),
     createWebviewPanel(viewType, title, _column, _options) {
       const panel = {
@@ -256,6 +270,12 @@ const BILLING_ACCOUNTS = [
 ];
 
 const realFetch = globalThis.fetch;
+/**
+ * Every quota read, so tests can assert that a refresh ACTUALLY happened
+ * rather than that a number merely looks right — a stale cached figure and a
+ * freshly fetched one are indistinguishable from the rendered value alone.
+ */
+const billingCalls = [];
 globalThis.fetch = async (input, init) => {
   const url = String(input);
   const json = (body) =>
@@ -265,6 +285,7 @@ globalThis.fetch = async (input, init) => {
     });
 
   if (url.includes("/billing/meter/get-user-resource")) {
+    billingCalls.push(url);
     return json({ code: 0, data: { Response: { Data: { Accounts: BILLING_ACCOUNTS } } } });
   }
   if (url.includes("/billing/meter/checkin-status")) {
@@ -298,14 +319,21 @@ async function main() {
     });
   });
 
-  await check("the provider is registered under the `codebuddy` vendor", () => {
-    assert.strictEqual(registered.vendor, "codebuddy");
-    assert.ok(registered.provider, "no provider was registered");
+  await check("BOTH model groups are registered (codebuddy + codebuddy-intl)", () => {
+    // Two vendors, not one: the picker lists them separately so a model from
+    // one cluster never appears under the other, and so the user can tell
+    // which quota a request will spend.
+    assert.deepStrictEqual(
+      [...registered.providers.keys()].sort(),
+      ["codebuddy", "codebuddy-intl"],
+      "both vendors must be registered"
+    );
   });
 
   await check("the commands VS Code advertises all exist", () => {
     const expected = [
       "codebuddy.manageProvider",
+      "codebuddy-intl.manageProvider",
       "codebuddy.menu",
       "codebuddy.login",
       "codebuddy.logout",
@@ -314,6 +342,11 @@ async function main() {
       "codebuddy.refreshModels",
       "codebuddy.toggleProvider",
       "codebuddy.selectVisionFallback",
+      // Wired to the hover card's footer links. They are deliberately NOT
+      // declared in package.json: they are the card's buttons, not palette
+      // commands, and listing them would offer two ways to do one thing.
+      "codebuddy.refreshUsage",
+      "codebuddy.checkinAll",
     ];
     for (const id of expected) {
       assert.ok(registered.commands.has(id), `missing command: ${id}`);
@@ -351,13 +384,31 @@ async function main() {
   console.log("the model catalog reaches VS Code");
   const token = new CancellationTokenSource().token;
   let models = [];
-  // init() runs in the background; wait for the catalog to land. Everything
+  // The catalog comes from the REAL gateway (see the fetch stub above), and
+  // the synthetic account only carries a session for one cluster — the other
+  // answers anonymously or not at all. So the provider under test is whichever
+  // one actually reports models. The previous version read
+  // `registered.provider` (i.e. "the last one registered") and therefore
+  // silently depended on source order rather than on the check it claimed.
+  //
+  // Polling is cheap: `provideLanguageModelChatInformation` reads the
+  // provider's cache; the network call happened once during activation.
+  // init() runs in the background, so wait for the catalog to land. Everything
   // that depends on activation having finished is checked after this point.
   const deadline = Date.now() + 20_000;
-  while (Date.now() < deadline) {
-    models = await registered.provider.provideLanguageModelChatInformation({ silent: true }, token);
-    if (models.length > 0) break;
-    await new Promise((r) => setTimeout(r, 250));
+  while (Date.now() < deadline && models.length === 0) {
+    for (const provider of registered.providers.values()) {
+      const candidate = await provider.provideLanguageModelChatInformation(
+        { silent: true },
+        token
+      );
+      if (candidate.length > 0) {
+        registered.provider = provider;
+        models = candidate;
+        break;
+      }
+    }
+    if (models.length === 0) await new Promise((r) => setTimeout(r, 250));
   }
 
   console.log("credentials (zero migration, including the rename)");
@@ -372,6 +423,7 @@ async function main() {
   });
 
   await check("models are offered (core's catalog is wired in)", () => {
+    assert.ok(registered.provider, "neither vendor returned a catalog after 20s");
     assert.ok(models.length > 0, "no models after 20s — is the catalog reachable?");
   });
   console.log(`      ${models.length} models, e.g. ${models.slice(0, 3).map((m) => m.id).join(", ")}`);
@@ -418,10 +470,8 @@ async function main() {
   });
 
   console.log("the status bar reflects the CURRENT account");
-  await check("it still names the signed-in account on hover", () => {
+  await check("a tooltip was set at all", () => {
     assert.ok(statusBar.tooltip, "no tooltip was set");
-    const md = String(statusBar.tooltip.value ?? statusBar.tooltip);
-    assert.match(md, /Smoke Test|CodeBuddy/, `tooltip says: ${md.slice(0, 120)}`);
   });
 
   await check("it uses the ORIGINAL icon id", () => {
@@ -433,24 +483,259 @@ async function main() {
     );
   });
 
-  await check("the bar is icon + percentage of the ACTIVE account, nothing else", () => {
-    // Exactly the pre-split format. Account names and counters belong on hover.
-    // 1250/2000 = 62.5% from the stubbed billing payload.
-    assert.match(
+  await check("the bar is icon + the chosen region's balance", () => {
+    // The slot is ~90px wide, so the number is compacted: the stubbed billing
+    // payload sums to 1250 remaining of 2000, i.e. 1.3k. It is CREDITS, not a
+    // percentage — a percentage alone cannot tell you whether 30% is a week
+    // or an afternoon of work.
+    assert.strictEqual(
       statusBar.text,
-      /^\$\(codebuddy-icon\)\s+62\.5%$/,
-      `expected "$(codebuddy-icon) 62.5%", got: ${statusBar.text}`
+      "$(codebuddy-icon) 1.3k",
+      `expected "$(codebuddy-icon) 1.3k", got: ${statusBar.text}`
     );
   });
 
-  await check("the hover is the ORIGINAL SVG card, not a text list", () => {
+  await check("the hover is an SVG card with ONE ROW PER REGION", () => {
     const md = String(statusBar.tooltip.value ?? statusBar.tooltip);
     assert.match(md, /data:image\/svg\+xml/, "tooltip is not an SVG card");
-    // The card's title, percent-encoded by encodeURIComponent.
-    assert.match(md, /CodeBuddy%20%E9%A2%9D%E5%BA%A6/, "missing the card title");
+
+    const encoded = md.match(/data:image\/svg\+xml;utf8,([^)]+)/);
+    assert.ok(encoded, "the SVG data URI is malformed");
+    const svg = decodeURIComponent(encoded[1]);
+
+    assert.match(svg, /CodeBuddy/, "missing the card title");
+
+    // Both regions must be present even when one has no account: a missing
+    // row reads as "this cluster does not exist", which is a different claim
+    // from "you have not signed in there".
+    assert.match(svg, /中国大陆/, "missing the CN row");
+    assert.match(svg, /Global/, "missing the Global row");
+
+    // The per-package table was removed on purpose: the hover is a glance at
+    // "how much is left", and the management page already answers "which
+    // pack are these credits coming from" in full.
+    assert.doesNotMatch(svg, /套餐/, "the package table came back");
+
+    // The stubbed check-in reports today as already claimed, so the CN row
+    // must carry that state — a card that silently drops it would leave the
+    // user claiming again every day.
+    assert.match(svg, /今日已签到/, "the CN check-in state is missing");
+
+    // Emoji were removed in favour of type and colour: they render at
+    // inconsistent widths across platforms, which is what made the old card
+    // look ragged. Nothing in the card should be outside the Basic
+    // Multilingual Plane's symbol blocks.
+    assert.doesNotMatch(svg, /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u, "emoji came back");
+
+    // The card is a baked image, so its palette cannot come from CSS vars.
+    // A dark-theme render must therefore use the dark foreground — a
+    // hard-coded light grey is what made it unreadable on a light theme.
+    assert.match(svg, /fill="#d4d4d4"/, "the dark palette was not applied");
+  });
+
+  await check("the hover actions are buttons, on one row with the refresh time", () => {
+    const md = String(statusBar.tooltip.value ?? statusBar.tooltip);
+    // A tooltip is inert without command links; `isTrusted` is what makes
+    // them clickable rather than stripped.
+    assert.ok(statusBar.tooltip.isTrusted, "the tooltip is not trusted — links would be stripped");
+    assert.match(md, /command:codebuddy\.refreshUsage/, "missing the refresh link");
+
+    // Every button, in row order. Each is an `<img>` holding an SVG, wrapped in
+    // the anchor so the whole control is the click target. A `<span>` capsule
+    // was tried first and cannot work: an inline box's background is sized by
+    // font metrics (~16px) and `padding` is stripped by the sanitizer, so it can
+    // never be anything but a label. `width`/`height` exist only on a replaced
+    // element.
+    const imgs = [...md.matchAll(/<a href="command:([\w.]+)" title="[^"]*"><img src="data:image\/svg\+xml;utf8,([^"]+)" width="(\d+)" height="(\d+)" alt="([^"]+)"><\/a>/g)];
+    assert.ok(imgs.length >= 1, "no buttons found");
+
+    const buttons = imgs.map((m) => ({
+      command: m[1],
+      svg: decodeURIComponent(m[2]),
+      width: Number(m[3]),
+      height: Number(m[4]),
+      alt: m[5],
+    }));
+    const refresh = buttons.find((b) => b.command === "codebuddy.refreshUsage");
+    assert.ok(refresh, "the refresh button is absent");
+
+    // Sized like a control, not like text. This is the assertion that catches a
+    // regression back to a label-sized chip.
+    for (const b of buttons) {
+      assert.strictEqual(b.height, 26, `${b.alt}: height is ${b.height}, expected 26`);
+      assert.ok(b.width >= 40, `${b.alt}: width is ${b.width}px — too narrow to read as a control`);
+      assert.match(b.svg, /<text[^>]*font-size="12"[^>]*text-anchor="middle"/, `${b.alt}: label is not centred at 12px`);
+    }
+
+    // ⚠ THE ALIGNMENT INVARIANT. The FIRST button in the row must carry a
+    // transparent left gutter equal to the card's own `PAD_X`, because that is
+    // the only way its capsule can line up with the card's left inset: the
+    // cell offset is the host's (it ships no `td` padding for hovers, so the
+    // browser default applies) and is not readable or settable from here.
+    //
+    // This must hold whichever button leads — with check-in available the
+    // leading button is 签到, without it the leading button is 刷新. That is
+    // exactly the case that regressed once, so it is asserted per-position
+    // rather than on a hard-coded button.
+    const leadingBox = buttons[0].svg.match(/<rect x="(\d+)" width="(\d+)" height="26" rx="4"/);
+    assert.ok(leadingBox, `${buttons[0].alt}: no rounded surface`);
+    assert.strictEqual(
+      leadingBox[1],
+      "10",
+      `${buttons[0].alt} (leading button) has no 10px gutter — it cannot align with the card`
+    );
+    // Non-leading buttons must NOT repeat the gutter, or the gap between two
+    // buttons doubles.
+    for (const b of buttons.slice(1)) {
+      const box = b.svg.match(/<rect x="(\d+)"/);
+      assert.strictEqual(box[1], "0", `${b.alt} should not repeat the leading gutter`);
+    }
+
+    // A primary action and a secondary one must not share a surface colour, or
+    // there is no hierarchy between "claim" and "refresh".
+    if (buttons.length > 1) {
+      const fill = (b) => b.svg.match(/<rect[^>]*fill="(#[0-9a-f]{6})"/)[1];
+      assert.notStrictEqual(
+        fill(buttons[0]),
+        fill(refresh),
+        "the check-in and refresh buttons have the same surface colour"
+      );
+    }
+
+    // De-emphasised relative to 13px body text, and clearly labelled as a time.
+    assert.match(md, /<small>更新 \d{2}:\d{2}<\/small>/, "the refresh time is missing or unlabelled");
+
+    // One table, two rows: the card, then the actions. Both rows take the same
+    // cell offset, which is what makes the first button line up with the card's
+    // own left inset without knowing what that offset is.
+    //
+    // `width` must be the CARD width in PIXELS: `100%` resolves against the
+    // hover's available width, which is wider than the card, and the tooltip
+    // stretches to it — pushing the timestamp far right of the card's edge.
+    assert.match(
+      md,
+      /<table width="420"><tbody><tr><td colspan="2"><img src="data:image\/svg\+xml;utf8,[^"]+" width="420" alt="CodeBuddy usage"><\/td><\/tr><tr><td>.*<\/td><td align="right"><small>更新 \d{2}:\d{2}<\/small><\/td><\/tr><\/tbody><\/table>/,
+      "the card and the actions are not two rows of one fixed-width table"
+    );
+
+    // The card must NOT also be emitted as a standalone markdown image: that
+    // would put it back on the paragraph grid and reintroduce the offset the
+    // table exists to cancel.
+    assert.doesNotMatch(
+      md,
+      /!\[CodeBuddy usage\]/,
+      "the card is still a standalone markdown image outside the table"
+    );
+  });
+
+  // ── the tracked region follows the vendor actually used ──────────────
+  //
+  // The user-visible requirement: send a message through a vendor and the
+  // displayed quota must belong to THAT cluster. An earlier attempt only
+  // messaged the (usually closed) management webview, so nothing on screen
+  // changed — these checks are what that regression failed.
+  console.log("the tracked region follows the vendor");
+
+  /** Wait for the fire-and-forget settings write the provider triggers. */
+  async function awaitRegion(region, ms = 10_000) {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline && settings.region !== region) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return settings.region;
+  }
+
+  /**
+   * Drive one turn through a vendor and report the region that got written.
+   *
+   * The provider fires its event BEFORE it touches the network, so the region
+   * must flip even though this turn cannot succeed — the fixture's credentials
+   * are deliberately fake. The rejection is expected and swallowed; letting it
+   * escape would fail the test for the wrong reason.
+   */
+  async function sendThrough(vendor, modelId) {
+    const provider = registered.providers.get(vendor);
+    assert.ok(provider, `no provider for ${vendor}`);
+    const attempt = provider
+      .provideLanguageModelChatResponse(
+        { id: modelId },
+        [],
+        {},
+        { report() {} },
+        token
+      )
+      .then(
+        () => "completed",
+        () => "failed (expected — fake credentials)"
+      );
+    // Do not let a slow or hanging network call hold the test suite open.
+    await Promise.race([attempt, new Promise((r) => setTimeout(r, 3_000))]);
+    return attempt;
+  }
+
+  await check("a turn through the INTL vendor switches the tracked region", async () => {
+    settings.region = "cn"; // start from the opposite of what we expect
+    await sendThrough("codebuddy-intl", "default-model");
+    const region = await awaitRegion("intl");
+    assert.strictEqual(
+      region,
+      "intl",
+      `the region did not follow the vendor (still ${region})`
+    );
+  });
+
+  await check("and back again — it is not a one-way latch", async () => {
+    await sendThrough("codebuddy", "default");
+    const region = await awaitRegion("cn");
+    assert.strictEqual(region, "cn", `the region did not follow back (still ${region})`);
+  });
+
+  await check("a region switch also re-reads quota", async () => {
+    // The figures on screen belong to the region just left, so the switch must
+    // refetch them. Counted, not assumed: the billing stub is the observable.
+    settings.region = "cn";
+    billingCalls.length = 0;
+    await sendThrough("codebuddy-intl", "default-model");
+    await awaitRegion("intl");
+    // Give the background refresh a moment to land after the settings write.
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline && billingCalls.length === 0) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.ok(
+      billingCalls.length > 0,
+      "switching region did not re-read any quota — the card would show the old cluster's numbers"
+    );
   });
 
   console.log(`\n${passed} checks passed`);
+
+  // Visual review hook: geometry bugs (overlapping text, dead space, a bar
+  // that reads as a slab) pass every textual assertion and are only visible
+  // in a rendered image. Dumping the SVG lets a reviewer open it in a browser
+  // without starting an Extension Development Host.
+  //
+  //   WBAW_DUMP_SVG=/tmp/card.svg node scripts/smoke-extension.cjs
+  if (process.env.WBAW_DUMP_SVG) {
+    const md = String(statusBar.tooltip?.value ?? statusBar.tooltip ?? "");
+    // The card is the FIRST data URI: it is the first cell of the tooltip
+    // table. Buttons follow.
+    const encoded = md.match(/src="data:image\/svg\+xml;utf8,([^"]+)"/);
+    if (encoded) {
+      const out = process.env.WBAW_DUMP_SVG;
+      fs.writeFileSync(out, decodeURIComponent(encoded[1]));
+      console.log(`card written to ${out}`);
+    }
+  }
+  // The markdown side (image + action table) needs its own dump: the SVG is
+  // only half the tooltip, and the half that is hardest to get right is the
+  // half that depends on the host's stylesheet.
+  if (process.env.WBAW_DUMP_MD) {
+    const md = String(statusBar.tooltip?.value ?? statusBar.tooltip ?? "");
+    fs.writeFileSync(process.env.WBAW_DUMP_MD, md);
+    console.log(`tooltip markdown written to ${process.env.WBAW_DUMP_MD}`);
+  }
+
   fs.rmSync(userData, { recursive: true, force: true });
 }
 

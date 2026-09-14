@@ -34,7 +34,7 @@ import {
   startLogin,
 } from "./auth";
 import { BadRequestError, UnauthorizedError } from "./errors";
-import { DEFAULT_REGION, type Region } from "./region";
+import { DEFAULT_REGION, REGIONS, type Region } from "./region";
 import {
   BillingAccount,
   BillingResult,
@@ -1242,8 +1242,42 @@ export class WorkbuddyService {
     try {
       const auth = await this.ensureAuthInRegion(region);
       await this.loadCatalog(region, this.regionOf(auth) === region ? auth : undefined);
-    } catch {
-      // Anonymous fallback lives inside loadCatalog; nothing to surface here.
+    } catch (err) {
+      // Anonymous fallback lives inside loadCatalog. Log the reason anyway —
+      // a silent empty picker is indistinguishable from "this region has no
+      // models", which is how the CN/INTL cross-talk bug above stayed
+      // invisible for so long.
+      this.log(`ensureCatalog(${region}) failed: ${errText(err)}`);
+    }
+  }
+
+  /**
+   * Warm the catalog for EVERY region at once.
+   *
+   * `init()` only warms the active account's region (one round-trip on the
+   * hot path), but hosts that expose both regions as separate LM providers
+   * — workbuddy-anywhere-for-copilot registers `codebuddy` (CN) AND
+   * `codebuddy-intl` (INTL) — would show an empty picker on the unused
+   * region until the user actually signs in there or calls
+   * `refreshModels(region)` from the management page. That is the bug fixed
+   * by this helper: a single call at startup populates both caches in
+   * parallel (independent clusters, no contention).
+   *
+   * Errors per region are swallowed inside `ensureCatalog`; partial success
+   * is the goal here, not all-or-nothing.
+   */
+  async warmAllCatalogs(): Promise<void> {
+    // STRICTLY SEQUENTIAL. Running the two regions in parallel looked
+    // harmless — separate hosts, separate caches — but both paths funnel
+    // through `ensureAuthInRegion` → `loadValidAuth`, which can trigger a
+    // token refresh and a read-modify-write of the credential store. Two
+    // concurrent saves race, and the loser's catalog request goes out with
+    // the wrong account (or none), silently collapsing one region to an
+    // empty list. Verified 2026-09-14: parallel produced "29 CN / 0 Global",
+    // sequential produces both. Two round-trips at startup is a price worth
+    // paying for determinism.
+    for (const region of REGIONS) {
+      await this.ensureCatalog(region);
     }
   }
 

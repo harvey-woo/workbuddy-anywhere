@@ -50,9 +50,78 @@ export function activate(context: vscode.ExtensionContext): void {
   const cnProvider = new CodeBuddyChatProvider(service, "cn");
   const intlProvider = new CodeBuddyChatProvider(service, "intl");
   context.subscriptions.push(cnProvider, intlProvider);
+
+  // Register each vendor SEPARATELY and tolerate failure.
+  //
+  // The two `vscode.lm.registerLanguageModelChatProvider` calls used to share
+  // one `subscriptions.push(...)`: an argument-list evaluation, so a throw on
+  // the FIRST one aborted `activate()` before the status bar, the commands and
+  // `service.init()` ever ran. The whole extension died with a single line in
+  // the Extension Host log, which is a hard failure mode to spot from the UI.
+  //
+  // It is also a failure that happens in practice: a STALE BUILD left in
+  // `~/.vscode/extensions/` still owns one of these vendor ids, and the host
+  // rejects the duplicate. Registering independently means whichever vendor is
+  // free still comes up, and the log says which one did not — instead of the
+  // picker silently missing half its models.
+  for (const [vendor, provider] of [
+    ["codebuddy", cnProvider],
+    ["codebuddy-intl", intlProvider],
+  ] as const) {
+    try {
+      context.subscriptions.push(
+        vscode.lm.registerLanguageModelChatProvider(vendor, provider)
+      );
+    } catch (err) {
+      info(
+        `could not register the "${vendor}" vendor: ${
+          err instanceof Error ? err.message : String(err)
+        } — another installed copy of this extension may still own it ` +
+          `(check ~/.vscode/extensions for an older version directory)`
+      );
+    }
+  }
+
+  // The whole extension tracks whichever vendor the user is actually chatting
+  // with: send through the `codebuddy-intl` picker entry and the region — the
+  // status-bar figure, the quota card, and the management page's segment —
+  // follows to Global.
+  //
+  // This is done by PERSISTING `settings.region`, not by messaging the webview.
+  // An earlier attempt only posted a message to the panel: it did nothing at
+  // all while the panel was closed, and nothing at all for the status bar, so
+  // the displayed quota kept belonging to the wrong cluster — which is exactly
+  // the bug this is meant to fix. Writing the setting makes every reader
+  // (status bar, quota card, page, RPC region hint) follow from ONE source,
+  // and the settings change already fans out through `service.onChange`.
+  //
+  // The write is skipped when the value already matches, so a chat costs at
+  // most one settings write per region switch, not one per message.
+  const trackProviderRegion = (region: "cn" | "intl"): void => {
+    void (async () => {
+      try {
+        const settings = await service.getSettings();
+        if (settings.region === region) return;
+        info(`chat used the ${region} vendor — switching the tracked region`);
+        await service.updateSettings({ region });
+        // The figures on screen belong to the region the user just LEFT, so
+        // re-read quota before the new region is drawn. Without this the card
+        // shows the other cluster's totals for up to a minute (the background
+        // tick), which reads as "nothing happened".
+        await service.refreshAllUsage();
+      } catch (err) {
+        info(
+          `could not switch the tracked region to ${region}: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+    })();
+  };
+
   context.subscriptions.push(
-    vscode.lm.registerLanguageModelChatProvider("codebuddy", cnProvider),
-    vscode.lm.registerLanguageModelChatProvider("codebuddy-intl", intlProvider)
+    cnProvider.onDidChangeLastUsedRegion(trackProviderRegion),
+    intlProvider.onDidChangeLastUsedRegion(trackProviderRegion)
   );
 
   // ONE status bar that always tracks the current region. The management page
@@ -75,6 +144,13 @@ export function activate(context: vscode.ExtensionContext): void {
   void service
     .init({ autoCheckin: true })
     .then(async (state) => {
+      // `init` only warms the ACTIVE account's region catalog. The other
+      // region's picker would be empty until the user signed in there or
+      // clicked "refresh" — invisible until you happened to log into one
+      // cluster first. Warm both in parallel so the picker shows the full
+      // model list the moment we register the providers, regardless of
+      // which cluster the user signed in to.
+      await service.warmAllCatalogs();
       await refreshCatalogs(cnProvider, intlProvider, service);
       status.refresh();
       info(`ready — ${state.accounts.length} account(s), ${cnProvider.count()} CN models, ${intlProvider.count()} Global models`);
@@ -165,6 +241,38 @@ function registerCommands(
     intlProvider.setModels(intl);
     void vscode.window.showInformationMessage(
       `WorkBuddy Anywhere: ${cn.length} CN, ${intl.length} Global models.`
+    );
+  });
+
+  // Wired to the hover card's "refresh" link. Re-reads quota for every
+  // account so the numbers the user is looking at are the ones they just
+  // asked for — the background tick is 60s and a hover is a deliberate act.
+  register("codebuddy.refreshUsage", async () => {
+    await service.refreshAllUsage();
+  });
+
+  // Wired to the hover card's "check in" link. Claims the daily bonus for
+  // EVERY account on both clusters in one sweep (the user's "签到一起签"),
+  // then reports what actually happened — including the case where the
+  // cluster has no check-in endpoint, which must not look like success.
+  register("codebuddy.checkinAll", async () => {
+    const result = await service.checkinAll();
+    const outcomes = Object.values(result.results ?? {});
+    const claimed = outcomes.filter((r) => r.state === "claimed").length;
+    const unsupported = outcomes.filter((r) => r.state === "unknown").length;
+    if (claimed === 0 && unsupported === outcomes.length && outcomes.length > 0) {
+      void vscode.window.showInformationMessage(
+        "WorkBuddy Anywhere: this cluster has no daily check-in."
+      );
+      return;
+    }
+    const credit = outcomes.reduce(
+      (sum, r) => sum + (typeof r.credit === "number" ? r.credit : 0),
+      0
+    );
+    void vscode.window.showInformationMessage(
+      `WorkBuddy Anywhere: checked in ${claimed} account(s)` +
+        (credit > 0 ? `, +${credit} credits` : ".")
     );
   });
 

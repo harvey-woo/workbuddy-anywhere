@@ -54,6 +54,20 @@ export class CodeBuddyChatProvider implements vscode.LanguageModelChatProvider {
   private readonly _onDidChange = new vscode.EventEmitter<void>();
   readonly onDidChangeLanguageModelChatInformation = this._onDidChange.event;
 
+  /**
+   * Fired once at the start of every chat request that flows through this
+   * provider. VS Code does not expose a stable "which chat model is the user
+   * looking at right now" event (see the picker model notes in
+   * extension.ts), so the only place a provider learns that "the user
+   * actually picked me and pressed Send" is `provideLanguageModelChatResponse`.
+   * The extension subscribes to both providers and forwards the latest one
+   * to the management webview so the page can re-render in the picked
+   * cluster's context — segment control + accounts + quota all follow.
+   */
+  private readonly _onDidChangeLastUsedRegion =
+    new vscode.EventEmitter<"cn" | "intl">();
+  readonly onDidChangeLastUsedRegion = this._onDidChangeLastUsedRegion.event;
+
   private models: ModelConfig[] = [];
 
   constructor(service: WorkbuddyService, region: "cn" | "intl") {
@@ -92,6 +106,7 @@ export class CodeBuddyChatProvider implements vscode.LanguageModelChatProvider {
 
   dispose(): void {
     this._onDidChange.dispose();
+    this._onDidChangeLastUsedRegion.dispose();
   }
 
   // ── models ────────────────────────────────────────────────────────────
@@ -191,6 +206,15 @@ export class CodeBuddyChatProvider implements vscode.LanguageModelChatProvider {
     // need the full stream (the arguments arrive in pieces) before they can be
     // validated.
     const toolCalls: ChatToolCall[] = [];
+
+    // Notify the management webview that the user just sent a request through
+    // THIS vendor's picker selection. The event fires at the start of the
+    // turn so the page can switch context BEFORE the first token arrives;
+    // firing only at the end would lag the UI for several seconds on long
+    // prompts. The webview ignores the message if it already shows this
+    // region (idempotent — the provider's region is a per-instance value, not
+    // a per-request one).
+    this._onDidChangeLastUsedRegion.fire(this.region);
 
     try {
       // Stamp this provider's region onto the request so core's per-region
