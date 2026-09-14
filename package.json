@@ -1,6 +1,6 @@
 {
   "name": "wbaw",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "description": "WorkBuddy Anywhere — one core, three hosts (VS Code, desktop, HTTP API). All workspace packages ship in lock-step at the version pinned here.",
   "license": "MIT",
@@ -18,6 +18,7 @@
     "version-packages": "changeset version && yarn sync:version",
     "sync:version": "node scripts/sync-version.mjs",
     "ci:drift": "node scripts/sync-version.mjs --check",
+    "release:dsh": "node scripts/release-dsh.mjs",
     "release:tag": "git tag \"v$(node -p \"require('./package.json').version\")\" && git push --tags"
   },
   "devDependencies": {

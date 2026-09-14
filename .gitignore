@@ -11,6 +11,9 @@ media/ui-dist/
 # hides them from `git status` entirely, so a commit silently drops them.
 packages/dsh/lib/
 *.vsix
+# scratch tree used by `yarn verify:release` to prove the packed tarball
+# installs without the private @wbaw/core
+packages/dsh/.verify-release/
 # electron-builder outputs (per-platform installers)
 packages/desktop/dist/
 packages/desktop/win-unpacked/

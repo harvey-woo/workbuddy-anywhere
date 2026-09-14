@@ -406,7 +406,7 @@ export function openApiDocument(version: string): Record<string, unknown> {
       "/v1/chat/completions": {
         post: {
           tags: ["OpenAI"],
-          summary: "Chat completion (streaming and non-streaming, tool calls)",
+          summary: "Chat completion — streaming and non-streaming, tool calls",
           requestBody: {
             required: true,
             content: {
@@ -450,6 +450,177 @@ export function openApiDocument(version: string): Record<string, unknown> {
               description: "Model group disabled locally",
               content: json("Error"),
             },
+            502: { description: "Upstream gateway error", content: json("Error") },
+          },
+        },
+      },
+      "/intl/v1/chat/completions": {
+        post: {
+          tags: ["OpenAI"],
+          summary: "Chat completion — international cluster",
+          description:
+            "Same contract as `/v1/chat/completions` but routed to the international gateway. " +
+            "An account key from the INTL region is required; CN accounts are not available here.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    model: { type: "string" },
+                    messages: { type: "array", items: { type: "object", additionalProperties: true } },
+                    stream: { type: "boolean", default: false },
+                    tools: { type: "array", items: { type: "object" } },
+                  },
+                  required: ["model", "messages"],
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: "Same as /v1/chat/completions" },
+            400: { description: "Malformed request", content: json("Error") },
+            401: { description: "No INTL account", content: json("Error") },
+            502: { description: "Upstream gateway error", content: json("Error") },
+          },
+        },
+      },
+      "/v1/messages": {
+        post: {
+          tags: ["Anthropic"],
+          summary: "Anthropic Messages — streaming and non-streaming",
+          description:
+            "Anthropic-compatible endpoint. Send the account key as `x-api-key` " +
+            "(or `Authorization: Bearer`). The `anthropic-version` header is accepted " +
+            "but ignored — the gateway handles version negotiation.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    model: { type: "string" },
+                    messages: { type: "array", items: { type: "object", additionalProperties: true } },
+                    max_tokens: { type: "integer", description: "Required by Anthropic. Capped by the gateway if the model's limit is lower." },
+                    stream: { type: "boolean", default: false },
+                    tools: { type: "array", items: { type: "object" } },
+                  },
+                  required: ["model", "messages", "max_tokens"],
+                },
+              },
+            },
+          },
+          responses: {
+            200: {
+              description: "Anthropic message, or text/event-stream when stream=true",
+              content: {
+                "application/json": { schema: { type: "object" } },
+                "text/event-stream": { schema: { type: "string" } },
+              },
+            },
+            400: { description: "Malformed request", content: json("Error") },
+            401: { description: "Not signed in to WorkBuddy", content: json("Error") },
+            502: { description: "Upstream gateway error", content: json("Error") },
+          },
+        },
+      },
+      "/intl/v1/messages": {
+        post: {
+          tags: ["Anthropic"],
+          summary: "Anthropic Messages — international cluster",
+          description: "Same contract as `/v1/messages` but routed to the international gateway.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    model: { type: "string" },
+                    messages: { type: "array", items: { type: "object", additionalProperties: true } },
+                    max_tokens: { type: "integer" },
+                    stream: { type: "boolean", default: false },
+                  },
+                  required: ["model", "messages", "max_tokens"],
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: "Same as /v1/messages" },
+            400: { description: "Malformed request", content: json("Error") },
+            502: { description: "Upstream gateway error", content: json("Error") },
+          },
+        },
+      },
+      "/v1/responses": {
+        post: {
+          tags: ["OpenAI"],
+          summary: "OpenAI Responses — streaming and non-streaming",
+          description:
+            "OpenAI Responses API endpoint (the newer API surface). " +
+            "Compatible with clients that target the Responses API instead of Chat Completions.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    model: { type: "string" },
+                    input: {
+                      description:
+                        "String or array of input items (same shape as OpenAI Responses API).",
+                    },
+                    stream: { type: "boolean", default: false },
+                    tools: { type: "array", items: { type: "object" } },
+                  },
+                  required: ["model", "input"],
+                },
+              },
+            },
+          },
+          responses: {
+            200: {
+              description: "Response object, or text/event-stream when stream=true",
+              content: {
+                "application/json": { schema: { type: "object" } },
+                "text/event-stream": { schema: { type: "string" } },
+              },
+            },
+            400: { description: "Malformed request", content: json("Error") },
+            401: { description: "Not signed in to WorkBuddy", content: json("Error") },
+            502: { description: "Upstream gateway error", content: json("Error") },
+          },
+        },
+      },
+      "/intl/v1/responses": {
+        post: {
+          tags: ["OpenAI"],
+          summary: "OpenAI Responses — international cluster",
+          description: "Same contract as `/v1/responses` but routed to the international gateway.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    model: { type: "string" },
+                    input: { description: "String or array of input items." },
+                    stream: { type: "boolean", default: false },
+                    tools: { type: "array", items: { type: "object" } },
+                  },
+                  required: ["model", "input"],
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: "Same as /v1/responses" },
+            400: { description: "Malformed request", content: json("Error") },
             502: { description: "Upstream gateway error", content: json("Error") },
           },
         },

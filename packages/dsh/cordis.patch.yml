@@ -13,8 +13,13 @@
     - id: dsh-workbuddy
       name: '@wbaw/dsh-workbuddy'
       config:
-        # Shares the on-disk login with the WorkBuddy desktop app and `wbaw serve`.
-        # Omitting dataDir lets the plugin default to ~/ .workbuddy-anywhere.
+        # Shares the on-disk login with the CLI and `wbaw serve` (which is why
+        # no credentials are configured here).
+        #
+        # NOT the desktop app's store — that one is separate on purpose, so two
+        # processes cannot race on the same token file. Point dataDir at it if
+        # you want them shared anyway.
+        # Omitting dataDir lets the plugin default to ~/.workbuddy-anywhere.
         providers:
           - workbuddy        # CN cluster
           - workbuddy-intl   # Global cluster

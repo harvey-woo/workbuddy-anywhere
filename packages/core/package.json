@@ -1,6 +1,6 @@
 {
   "name": "@wbaw/core",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "description": "WorkBuddy Anywhere core: auth, billing, model catalog, OpenAI-compatible chat engine, local HTTP API and web UI",
   "license": "MIT",
@@ -21,7 +21,7 @@
     "ui:build": "vite build --config ui/vite.config.mts",
     "ui:dev": "vite --config ui/vite.config.mts",
     "build": "yarn compile && yarn ui:build",
-    "test": "node scripts/test-protocols.cjs",
+    "test": "node scripts/test-protocols.cjs && node scripts/test-multi-account.cjs && node scripts/test-storage-crossproc.cjs",
     "serve": "node out/cli.js serve"
   },
   "devDependencies": {

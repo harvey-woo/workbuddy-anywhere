@@ -14,6 +14,7 @@
 
 import * as fs from "fs/promises";
 import * as path from "path";
+import { withFileLock } from "./file-lock";
 import { DEFAULT_REGION, type Region } from "./region";
 
 export type ThinkingEffort = "auto" | "low" | "medium" | "high" | "off";
@@ -86,6 +87,12 @@ export interface Settings {
   theme: "dark" | "light";
   /** UI language: "en" (default) or "zh". In VS Code webview, the host locale is used. */
   locale: "en" | "zh";
+  /**
+   * Port for the local API server (desktop app only). Persisted so the user
+   * does not have to reconfigure after restarts. `0` = not yet configured
+   * (the desktop app picks an available port on first launch).
+   */
+  serverPort: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -100,6 +107,7 @@ export const DEFAULT_SETTINGS: Settings = {
   region: DEFAULT_REGION,
   theme: "dark",
   locale: "en",
+  serverPort: 0,
 };
 
 export interface SettingsStore {
@@ -150,9 +158,19 @@ export class FileSettingsStore implements SettingsStore {
   }
 
   async update(patch: Partial<Settings>): Promise<Settings> {
-    const next: Settings = { ...(await this.get()), ...patch };
-    await fs.mkdir(this.dir, { recursive: true });
-    await fs.writeFile(this.file, JSON.stringify(next, null, 2), "utf-8");
-    return next;
+    // Read-modify-write on a file that other processes (dsh, `wbaw serve`, the
+    // desktop app) also write. `get()` re-reads every time so it never serves a
+    // stale snapshot, but without the lock two processes can still both read,
+    // both merge, and the second write drops the first's keys.
+    return withFileLock(this.file, async () => {
+      const next: Settings = { ...(await this.get()), ...patch };
+      await fs.mkdir(this.dir, { recursive: true });
+      // Atomic: a crash (or a concurrent reader) must never see a truncated
+      // file. `writeFile` in place can leave half a document behind.
+      const tmp = `${this.file}.${process.pid}.tmp`;
+      await fs.writeFile(tmp, JSON.stringify(next, null, 2), "utf-8");
+      await fs.rename(tmp, this.file);
+      return next;
+    });
   }
 }

@@ -7,15 +7,23 @@
  * `<plugin>/ui-dist` FIRST, so an installed plugin never has to guess where the
  * monorepo put `@wbaw/core`.
  *
- * Run by `npm run build` after `tsc`. The destination is CLEARED first:
+ * Run by `npm run build` after the bundle. The destination is CLEARED first:
  * index.html references content-hashed asset filenames, so leaving a previous
  * build behind would let both generations pile up in a published tarball.
+ *
+ * A missing source is a WARNING by default (a dev can build the plugin before
+ * the UI) but a hard FAILURE with `--strict` / `WB_STRICT_UI=1`, which is what
+ * `prepack` uses: shipping a release whose management page is a 404 is a
+ * failure, not a warning.
  */
 
 import { cp, rm, mkdir, access } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+const strict =
+  process.argv.includes("--strict") || process.env.WB_STRICT_UI === "1";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const pkgRoot = path.resolve(here, "..");
@@ -26,10 +34,14 @@ const dest = path.join(pkgRoot, "ui-dist");
 try {
   await access(source, constants.R_OK);
 } catch {
-  console.warn(
-    `[stage-ui] no UI bundle at ${source} — the management page will be unavailable.\n` +
-      `           Build it with: yarn workspace @wbaw/core ui:build`
-  );
+  const message =
+    `[stage-ui] no UI bundle at ${source} — the management page would be unavailable.\n` +
+    `           Build it with: yarn workspace @wbaw/core ui:build`;
+  if (strict) {
+    console.error(`${message}\n           Refusing to stage a release without it.`);
+    process.exit(1);
+  }
+  console.warn(message);
   process.exit(0);
 }
 

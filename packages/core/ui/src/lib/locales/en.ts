@@ -148,6 +148,18 @@ const en: Record<string, string | ((params: Record<string, string>) => string)> 
   "settings.apiDocs": "Open the API docs ↗",
   "settings.saved": (p) => `${p.label} saved`,
 
+  // ── API server management (desktop only) ──────────────────────────
+  "settings.serverTitle": "API Server",
+  "settings.serverHint": "The local API server lets external tools (Claude Code, OpenAI SDK, curl) use your WorkBuddy accounts. Change the port and restart if another service occupies it.",
+  "settings.serverPort": "Port",
+  "settings.serverStart": "Start",
+  "settings.serverStop": "Stop",
+  "settings.serverRestart": "Restart",
+  "settings.serverBusy": "Working…",
+  "settings.serverRunning": (p) => `Running on port ${p.port}`,
+  "settings.serverStopped": "Stopped",
+  "settings.serverError": "Failed to start",
+
   // ── Effort levels ──────────────────────────────────────────────────
   "effort.auto": "Auto — Per-model default from the server",
   "effort.low": "Low — Minimal thinking, fastest",

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { navigate, route } from "./lib/router";
+import type { ServerStatus } from "@core/rpc";
 import {
   accountsIn,
   refreshState,
@@ -38,6 +39,27 @@ const VIEWS = {
 
 const current = computed(() => VIEWS[route.value]);
 const cfg = runtimeConfig();
+const isDesktop = cfg.transport === "ipc";
+
+// ── API server state (desktop only) ─────────────────────────────────
+
+/** Track whether the API server is running. When stopped, only Settings is accessible. */
+const serverDown = ref(false);
+
+function onServerStateChanged(_event: unknown, state: ServerStatus): void {
+  const wasDown = serverDown.value;
+  serverDown.value = !state.running;
+  // If the server just went down and we are NOT on settings, redirect.
+  if (serverDown.value && !wasDown && route.value !== "settings") {
+    navigate("settings");
+  }
+}
+
+/** Wrapped navigate that blocks non-settings pages when the server is down. */
+function guardedNavigate(name: typeof route.value): void {
+  if (serverDown.value && name !== "settings") return;
+  navigate(name);
+}
 
 const sessionLabel = computed(() => {
   const s = state.value;
@@ -93,6 +115,21 @@ onMounted(async () => {
     void refreshState();
   };
   window.addEventListener("workbuddy:stateChanged", onStateChanged);
+
+  // Desktop: listen for API server state changes and redirect if it goes down.
+  if (isDesktop) {
+    window.addEventListener("workbuddy:serverStateChanged", onServerStateChanged as EventListener);
+    // Check initial state.
+    void call("getServerStatus").then((s) => {
+      const status = s as ServerStatus;
+      serverDown.value = !status.running;
+      if (serverDown.value && route.value !== "settings") navigate("settings");
+    }).catch(() => {});
+  }
+});
+
+onUnmounted(() => {
+  window.removeEventListener("workbuddy:serverStateChanged", onServerStateChanged as EventListener);
 });
 
 /**
@@ -244,8 +281,9 @@ const checkinAvailable = computed(() => {
           v-for="tab in TABS"
           :key="tab.name"
           class="wb-nav"
-          :class="{ active: route === tab.name }"
-          @click="navigate(tab.name)"
+          :class="{ active: route === tab.name, 'opacity-40 pointer-events-none': serverDown && tab.name !== 'settings' }"
+          :disabled="serverDown && tab.name !== 'settings'"
+          @click="guardedNavigate(tab.name)"
         >
           {{ t(tab.key) }}
         </button>

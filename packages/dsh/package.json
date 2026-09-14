@@ -1,6 +1,6 @@
 {
   "name": "@wbaw/dsh-workbuddy",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "WorkBuddy Anywhere for DeepSeek Harness: use WorkBuddy models in dsh chat, with the shared multi-account management page served inside dsh Settings.",
   "license": "MIT",
   "type": "module",
@@ -35,26 +35,30 @@
     "README.md"
   ],
   "scripts": {
-    "compile": "tsc -p ./ && node scripts/stage-ui.mjs",
+    "clean": "rm -rf lib ui-dist",
+    "bundle": "node esbuild.mjs",
+    "types": "tsc -p ./ --emitDeclarationOnly",
+    "compile": "node esbuild.mjs && tsc -p ./ --emitDeclarationOnly && node scripts/stage-ui.mjs",
     "build": "yarn compile",
-    "watch": "tsc -w -p ./",
-    "typecheck": "tsc -p ./ --noEmit"
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc -p ./ --noEmit",
+    "verify:release": "node scripts/verify-tarball.mjs",
+    "prepack": "WB_STRICT_UI=1 yarn compile"
   },
   "dependencies": {
-    "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh-attachment": "^0.1.5-rc.1",
-    "@deepseek-ai/dsh-brand": "^0.1.5-rc.1",
-    "@deepseek-ai/dsh-invariants": "^0.1.5-rc.1",
-    "@deepseek-ai/dsh-llm": "^0.0.1-rc.1",
-    "@deepseek-ai/dsh-timeout": "^0.1.5-rc.1",
-    "@deepseek-ai/schemastery": "^3.18.2",
-    "@wbaw/core": "workspace:*"
-  },
-  "devDependencies": {
-    "@types/node": "^20.11.0",
-    "typescript": "^5.4.0"
+    "@deepseek-ai/schemastery": "^3.18.2"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.2"
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-llm": "^0.1.5-rc.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-llm": "^0.1.5-rc.1",
+    "@deepseek-ai/schemastery": "^3.18.2",
+    "@types/node": "^20.11.0",
+    "@wbaw/core": "workspace:*",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.4.0"
   }
 }

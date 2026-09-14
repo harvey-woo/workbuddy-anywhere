@@ -14,7 +14,12 @@ import type { Settings } from "./settings";
 import type { WorkbuddyService } from "./service";
 
 export type RpcHandler = (args: Record<string, unknown>) => Promise<unknown>;
-export type RpcHandlers = Record<RpcMethod, RpcHandler>;
+/**
+ * Handler map for every RPC method. Desktop-only methods (`getServerStatus`,
+ * `setServerPort`, `startServer`, `stopServer`) are optional: they are handled
+ * directly by the Electron IPC bridge, not by core's shared handler table.
+ */
+export type RpcHandlers = Omit<Record<RpcMethod, RpcHandler>, "getServerStatus" | "setServerPort" | "startServer" | "stopServer"> & Partial<Pick<Record<RpcMethod, RpcHandler>, "getServerStatus" | "setServerPort" | "startServer" | "stopServer">>;
 
 export interface RpcHostHooks {
   /**

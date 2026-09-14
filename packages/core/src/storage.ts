@@ -27,6 +27,7 @@
 
 import * as fs from "fs/promises";
 import * as path from "path";
+import { withFileLock } from "./file-lock";
 import { DEFAULT_REGION, type Region } from "./region";
 import { createHash } from "crypto";
 import type { WorkbuddyAuth } from "./auth";
@@ -179,6 +180,31 @@ export class FileAuthStore implements AuthStore {
     return path.join(this.dir, this.fileName);
   }
 
+  /**
+   * Run `fn` with exclusive access to the file.
+   *
+   * Two layers, because there are two kinds of concurrency:
+   *   - `serialize` orders callers INSIDE this process (one store instance is
+   *     shared by the whole service);
+   *   - `withFileLock` orders callers ACROSS processes, which is the case this
+   *     store has to survive because the dsh plugin and `wbaw serve` default to
+   *     the same directory.
+   *
+   * The cache is dropped before `fn` runs so the read half of the
+   * read-modify-write starts from what is on disk right now. Without that, a
+   * writer would spread a snapshot taken before another process wrote and put
+   * that stale copy back — silently deleting every account the other process
+   * had added.
+   */
+  private mutate<T>(fn: () => Promise<T>): Promise<T> {
+    return this.serialize(() =>
+      withFileLock(this.file, () => {
+        this.cache = undefined;
+        return fn();
+      })
+    );
+  }
+
   /** Run `fn` with exclusive access to the file. */
   private serialize<T>(fn: () => Promise<T>): Promise<T> {
     const next = this.queue.then(fn, fn);
@@ -190,8 +216,29 @@ export class FileAuthStore implements AuthStore {
     return next;
   }
 
+  /**
+   * Identity of the file as we last saw it (`inode:size:mtime`), used to notice
+   * a rewrite by another process. Every write here goes through `write()`,
+   * which renames a fresh temp file into place — so ANY write, ours or not,
+   * changes the inode, and a stale cache is always detectable.
+   */
+  private stamp?: string;
+
+  /** Current identity of the file on disk; `"missing"` when there is none. */
+  private async currentStamp(): Promise<string> {
+    try {
+      const st = await fs.stat(this.file);
+      return `${st.ino}:${st.size}:${st.mtimeMs}`;
+    } catch {
+      return "missing";
+    }
+  }
+
   private async read(): Promise<AuthFileV2> {
-    if (this.cache) return this.cache;
+    // The cache is only trustworthy while the file is the one we last read. A
+    // reader that kept handing back its first snapshot would also never SEE an
+    // account another process added, on top of clobbering it on the next write.
+    if (this.cache && this.stamp === (await this.currentStamp())) return this.cache;
     this.cache = await this.readFromDisk();
     return this.cache;
   }
@@ -200,7 +247,9 @@ export class FileAuthStore implements AuthStore {
     let raw: string;
     try {
       raw = await fs.readFile(this.file, "utf-8");
+      this.stamp = await this.currentStamp();
     } catch {
+      this.stamp = await this.currentStamp();
       return { ...EMPTY, accounts: {} };
     }
 
@@ -283,13 +332,23 @@ export class FileAuthStore implements AuthStore {
     return { version: 2, activeKeys: cleaned, accounts };
   }
 
-  /** Atomic write: temp file + rename, so a crash cannot truncate the real one. */
+  /**
+   * Atomic write: temp file + rename, so a crash cannot truncate the real one.
+   *
+   * The object is healed first, so the cache always holds exactly what a
+   * subsequent read would produce. Skipping that is what used to make
+   * `remove()` look like it had thrown away the region the removal did not
+   * touch: the file was fine, but the in-memory copy written here disagreed
+   * with it.
+   */
   private async write(file: AuthFileV2): Promise<void> {
-    this.cache = file;
+    const healed = this.heal({ accounts: file.accounts }, file.activeKeys ?? {});
+    this.cache = healed;
     await fs.mkdir(this.dir, { recursive: true });
     const tmp = `${this.file}.${process.pid}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(file, null, 2), "utf-8");
+    await fs.writeFile(tmp, JSON.stringify(healed, null, 2), "utf-8");
     await fs.rename(tmp, this.file);
+    this.stamp = await this.currentStamp();
   }
 
   async list(): Promise<WorkbuddyAuth[]> {
@@ -331,7 +390,7 @@ export class FileAuthStore implements AuthStore {
    * so the two clusters can hold independent selections.
    */
   async setActive(key: string | null, region: Region = DEFAULT_REGION): Promise<void> {
-    await this.serialize(async () => {
+    await this.mutate(async () => {
       const file = await this.read();
       if (key !== null && !file.accounts[key]) return;
       const nextKeys: Partial<Record<Region, string | null>> = {
@@ -348,7 +407,7 @@ export class FileAuthStore implements AuthStore {
    * CN does not change which Global account is active.
    */
   async upsert(auth: WorkbuddyAuth): Promise<WorkbuddyAuth> {
-    return this.serialize(async () => {
+    return this.mutate(async () => {
       const file = await this.read();
       const key = accountKey(auth);
       const region = (auth.region ?? DEFAULT_REGION) as Region;
@@ -372,7 +431,7 @@ export class FileAuthStore implements AuthStore {
    * either side.
    */
   async save(auth: WorkbuddyAuth): Promise<void> {
-    await this.serialize(async () => {
+    await this.mutate(async () => {
       const file = await this.read();
       const key = accountKey(auth);
       await this.write({
@@ -389,7 +448,7 @@ export class FileAuthStore implements AuthStore {
    * regions are untouched.
    */
   async rename(oldKey: string, auth: WorkbuddyAuth): Promise<void> {
-    await this.serialize(async () => {
+    await this.mutate(async () => {
       const file = await this.read();
       const newKey = accountKey(auth);
       if (newKey === oldKey) {
@@ -414,23 +473,30 @@ export class FileAuthStore implements AuthStore {
   }
 
   async remove(key: string): Promise<void> {
-    await this.serialize(async () => {
+    await this.mutate(async () => {
       const file = await this.read();
       if (!file.accounts[key]) return;
       const accounts = { ...file.accounts };
       delete accounts[key];
-      const next: AuthFileV2 = {
-        version: 2,
-        activeKey: file.activeKey === key ? Object.keys(accounts)[0] ?? null : file.activeKey,
-        accounts,
-      };
-      if (Object.keys(accounts).length === 0) await this.drop();
-      else await this.write(next);
+      if (Object.keys(accounts).length === 0) {
+        await this.drop();
+        return;
+      }
+      // Clear the removed key only from the region that had it selected, and
+      // let `write()`'s heal pick that region's replacement. Passing through
+      // `activeKeys` is the point: the old code wrote the v1 `activeKey` field
+      // instead, which dropped every region's selection on the floor. Removing
+      // a CN account would silently re-pick the Global one too.
+      const activeKeys = { ...(file.activeKeys ?? {}) };
+      for (const r of [DEFAULT_REGION, "intl"] as Region[]) {
+        if (activeKeys[r] === key) activeKeys[r] = null;
+      }
+      await this.write({ version: 2, activeKeys, accounts });
     });
   }
 
   async clear(): Promise<void> {
-    await this.serialize(() => this.drop());
+    await this.mutate(() => this.drop());
   }
 
   private async drop(): Promise<void> {
@@ -440,5 +506,6 @@ export class FileAuthStore implements AuthStore {
     } catch {
       // already gone
     }
+    this.stamp = await this.currentStamp();
   }
 }

@@ -403,7 +403,12 @@ export async function startApiServer(opts: ApiServerOptions): Promise<ApiServerH
       if (accountKey && route.accountScoped && args.key === undefined) {
         args.key = accountKey;
       }
-      sendJson(res, 200, await handlers[key](args));
+      const handler = handlers[key];
+      if (!handler) {
+        sendJson(res, 404, openAIError(`${method} is not available on this host`, "not_found"));
+        return;
+      }
+      sendJson(res, 200, await handler(args));
       return;
     }
     sendJson(res, 404, openAIError(`Unknown API route: ${method} ${pathname}`, "not_found"));
@@ -643,7 +648,7 @@ Three chat protocols are served, matching VS Code's BYOK <code>apiType</code> va
 <div id="out">loading…</div>
 <script>
 fetch('/openapi.json').then(function(r){return r.json()}).then(function(doc){
-  var order=['OpenAI','UI'], out=document.getElementById('out'), html='';
+  var order=['OpenAI','Anthropic','UI'], out=document.getElementById('out'), html='';
   order.forEach(function(tag){
     var rows=[];
     Object.keys(doc.paths).forEach(function(p){

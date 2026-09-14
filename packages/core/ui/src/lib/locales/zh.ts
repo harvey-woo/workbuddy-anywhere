@@ -145,6 +145,18 @@ const zh: Record<string, string | ((params: Record<string, string>) => string)> 
   "settings.apiDocs": "查看 API 文档 ↗",
   "settings.saved": (p) => `${p.label} 已保存`,
 
+  // ── API server management (desktop only) ──────────────────────────
+  "settings.serverTitle": "API 服务器",
+  "settings.serverHint": "本地 API 服务器让外部工具（Claude Code、OpenAI SDK、curl 等）使用你的 WorkBuddy 账号。如果端口被占用，请修改后重启。",
+  "settings.serverPort": "端口",
+  "settings.serverStart": "启动",
+  "settings.serverStop": "停止",
+  "settings.serverRestart": "重启",
+  "settings.serverBusy": "处理中…",
+  "settings.serverRunning": (p) => `运行中，端口 ${p.port}`,
+  "settings.serverStopped": "已停止",
+  "settings.serverError": "启动失败",
+
   // ── Effort levels ──────────────────────────────────────────────────
   "effort.auto": "自动 — 服务器模型默认值",
   "effort.low": "低 — 最少推理，最快",

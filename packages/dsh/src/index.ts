@@ -22,7 +22,13 @@ import { WorkbuddyAdapter, toDiscoveredModel } from "./adapter.js";
 import { registerWorkbuddyWeb } from "./webui.js";
 import type { LlmDiscoveredModel, LlmModelDiscoveryRequest } from "@deepseek-ai/dsh-llm";
 
-/** Same data directory the desktop app and `wbaw serve` use, so login is shared. */
+/**
+ * Data directory shared with the CLI and `wbaw serve`.
+ *
+ * NOT the desktop app's: that one keeps its own store under `userData/data`
+ * (deliberately — see `packages/desktop/src/service.ts`), so accounts added
+ * there do not show up here unless `dataDir` is pointed at it explicitly.
+ */
 const DEFAULT_DATA_DIR = path.join(os.homedir(), ".workbuddy-anywhere");
 
 /** One dsh provider route per WorkBuddy cluster. */

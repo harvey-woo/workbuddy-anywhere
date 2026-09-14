@@ -28,6 +28,16 @@ import type { Region } from "./region";
 import type { ModelConfig } from "./models";
 import type { CheckinResult } from "./billing";
 
+/** Status of the local API server (desktop app only). */
+export interface ServerStatus {
+  /** Whether the HTTP API server is currently listening. */
+  running: boolean;
+  /** The port the server is bound to (or was last bound to). 0 = unconfigured. */
+  port: number;
+  /** Human-readable error when the server failed to start. Empty = no error. */
+  error: string;
+}
+
 /** What each method returns, and what (single) argument it takes. */
 export interface RpcMethods {
   getState(params?: { region?: Region }): ServiceState;
@@ -79,6 +89,20 @@ export interface RpcMethods {
   listVisionModels(): VisionModelsResult;
   /** Open a URL in the user's browser (webview/IPC hosts must relay it). */
   openExternal(params: { url: string }): { ok: true };
+
+  // ── Desktop-only: API server lifecycle ──────────────────────────────
+
+  /** Return the current API server status, port, and any error message. */
+  getServerStatus(): ServerStatus;
+  /**
+   * Save a new port number to settings (does NOT start/stop the server).
+   * The caller should follow up with `startServer` or `restartServer`.
+   */
+  setServerPort(params: { port: number }): { ok: true };
+  /** Start the API server on the configured port. No-op if already running. */
+  startServer(): ServerStatus;
+  /** Stop the API server. */
+  stopServer(): ServerStatus;
 }
 
 export type RpcMethod = keyof RpcMethods;
@@ -194,6 +218,10 @@ export const RPC_ROUTES: Record<RpcMethod, RpcRoute> = {
     summary: "Image-description candidates for this host",
   },
   openExternal: { http: null, summary: "Open a URL in the browser" },
+  getServerStatus: { http: null, summary: "API server status (desktop only)" },
+  setServerPort: { http: null, body: true, summary: "Save API server port (desktop only)" },
+  startServer: { http: null, summary: "Start the API server (desktop only)" },
+  stopServer: { http: null, summary: "Stop the API server (desktop only)" },
 };
 
 export const RPC_METHODS = Object.keys(RPC_ROUTES) as RpcMethod[];

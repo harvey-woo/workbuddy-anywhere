@@ -18,6 +18,12 @@ function injectedVersion(): string {
   return flag ? flag.slice("--workbuddy-version=".length) : "";
 }
 
+/** The HTTP API server URL the desktop app hosts for external clients. */
+function injectedApiUrl(): string {
+  const flag = process.argv.find((arg) => arg.startsWith("--workbuddy-api-url="));
+  return flag ? flag.slice("--workbuddy-api-url=".length) : "";
+}
+
 contextBridge.exposeInMainWorld("workbuddy", {
   invoke: (method: string, params?: unknown): Promise<unknown> =>
     ipcRenderer.invoke(IPC_INVOKE, method, params),
@@ -36,4 +42,5 @@ contextBridge.exposeInMainWorld("workbuddy", {
 contextBridge.exposeInMainWorld("__WORKBUDDY__", {
   transport: "ipc",
   version: injectedVersion(),
+  baseUrl: injectedApiUrl(),
 });

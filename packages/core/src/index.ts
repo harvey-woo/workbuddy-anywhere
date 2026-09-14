@@ -28,5 +28,9 @@ export * from "./vision";
 // extension) can route UI calls without pulling in the HTTP server.
 export * from "./rpc";
 export * from "./rpc-handlers";
+
+// The API server — only useful for Node.js hosts (desktop, CLI). The VS Code
+// extension never starts one, so this does not change its bundle.
+export { startApiServer, type ApiServerHandle } from "./server/index";
 export * from "./chat/types";
 export * from "./chat/engine";

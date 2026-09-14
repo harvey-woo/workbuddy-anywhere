@@ -10,9 +10,11 @@
  * is what keeps every hosted account signed in, so quitting on window close
  * would silently sign people out of an app they thought was still running.
  */
+import * as net from "node:net";
 import * as path from "node:path";
 import { BrowserWindow, Menu, Tray, app, nativeImage, shell } from "electron";
-import { installRpcBridge } from "./ipc";
+import { startApiServer, type ApiServerHandle } from "@wbaw/core";
+import { installRpcBridge, IPC_INVOKE, type ServerState } from "./ipc";
 import { createDesktopService } from "./service";
 import { createTray, type TrayRoute } from "./tray";
 
@@ -49,8 +51,80 @@ let quitting = false;
 /** Which tab the window currently shows, so a tray action can move it. */
 let shownRoute: Route = "accounts";
 
+// ── API server state ───────────────────────────────────────────────────
+
+let apiServer: ApiServerHandle | null = null;
+let serverState: ServerState = { running: false, port: 0, error: "" };
+
 function log(message: string): void {
   console.log(`[core] ${message}`);
+}
+
+/** Push the current server state to the renderer. */
+function pushServerState(): void {
+  void win?.webContents.send("workbuddy:serverStateChanged", serverState);
+}
+
+/**
+ * Try to listen on a port to see if it is available.
+ * Returns true if the port is free, false if something is already bound.
+ */
+function isPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once("error", () => resolve(false));
+    srv.once("listening", () => {
+      srv.close(() => resolve(true));
+    });
+    srv.listen(port, "127.0.0.1");
+  });
+}
+
+/**
+ * Find an available port starting from `preferred`. If the preferred port is
+ * taken, try the next one up to `preferred + 99`.
+ */
+async function findAvailablePort(preferred: number): Promise<number> {
+  for (let port = preferred; port < preferred + 100; port++) {
+    if (await isPortFree(port)) return port;
+  }
+  // Last resort: let the OS pick one.
+  return 0;
+}
+
+/** Start the API server on the given port. */
+async function doStartServer(port: number): Promise<void> {
+  if (apiServer) return; // already running
+  try {
+    const handle = await startApiServer({
+      service,
+      port,
+      version: app.getVersion(),
+      log: (msg) => log(msg),
+    });
+    apiServer = handle;
+    serverState = { running: true, port: handle.port, error: "" };
+    log(`API server listening on ${handle.url}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    serverState = { running: false, port, error: msg };
+    log(`API server failed: ${msg}`);
+  }
+  pushServerState();
+}
+
+/** Stop the API server. */
+async function doStopServer(): Promise<void> {
+  if (!apiServer) return;
+  try {
+    await apiServer.close();
+  } catch {
+    // best-effort
+  }
+  apiServer = null;
+  serverState = { running: false, port: serverState.port, error: "" };
+  log("API server stopped");
+  pushServerState();
 }
 
 function createWindow(): BrowserWindow {
@@ -108,6 +182,10 @@ function show(route: Route = shownRoute): void {
   win.focus();
 }
 
+// ── Service + server startup ───────────────────────────────────────────
+
+let service: ReturnType<typeof createDesktopService>;
+
 async function main(): Promise<void> {
   // A second launch must focus the running app, not start a rival whose token
   // tick would fight over the same credential file.
@@ -117,12 +195,42 @@ async function main(): Promise<void> {
   }
   app.on("second-instance", () => show());
 
-  const service = createDesktopService(log);
-  installRpcBridge(service);
+  service = createDesktopService(log);
+
   // autoCheckin: claim the daily bonus for every account on startup, on BOTH
   // clusters. core also arms a timer for the day rollover, so a tray app that
   // stays open for weeks keeps claiming without anyone opening the window.
   await service.init({ autoCheckin: true });
+
+  // Determine the port: read from settings, or find an available one on first launch.
+  const settings = await service.getSettings();
+  let port = settings.serverPort;
+  if (!port) {
+    port = await findAvailablePort(8787);
+    await service.updateSettings({ serverPort: port });
+    log(`First launch: assigned port ${port}`);
+  }
+
+  // Start the API server. If it fails the UI will show the error and offer a
+  // retry — the app stays alive so the user can fix the port in settings.
+  serverState = { running: false, port, error: "" };
+  await doStartServer(port);
+
+  installRpcBridge(service, {
+    getState: () => serverState,
+    start: async () => {
+      await doStartServer(serverState.port);
+      return serverState;
+    },
+    stop: async () => {
+      await doStopServer();
+      return serverState;
+    },
+    setPort: async (port: number) => {
+      await service.updateSettings({ serverPort: port });
+      serverState = { ...serverState, port };
+    },
+  });
 
   win = createWindow();
   // Only the packaged app gets its icon from the bundle; in development the
@@ -148,7 +256,11 @@ async function main(): Promise<void> {
 
   // Starting at login must NOT throw a window in the user's face: waiting
   // quietly in the tray is the whole point of starting with the system.
-  if (!app.getLoginItemSettings().wasOpenedAtLogin) show("accounts");
+  if (!app.getLoginItemSettings().wasOpenedAtLogin) {
+    // If the server failed to start, go straight to settings so the user can
+    // fix the port. Otherwise land on accounts as usual.
+    show(serverState.error ? "settings" : "accounts");
+  }
 
   // Clicking the dock icon after the window was hidden should bring it back.
   app.on("activate", () => show());
@@ -161,6 +273,7 @@ async function main(): Promise<void> {
   app.on("before-quit", () => {
     quitting = true;
     tray?.destroy();
+    void doStopServer();
     service.dispose();
   });
 }

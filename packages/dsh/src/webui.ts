@@ -226,24 +226,21 @@ function configScript(langTag?: string): string {
  * Locate the built management UI (`ui-dist`).
  *
  * Order matters: the plugin's OWN copy is checked first, because
- * `esbuild.mjs` stages it there. That makes the package self-contained — a
- * published or `link:`-installed plugin carries its UI and never has to guess
- * where the monorepo put `@wbaw/core`. The two fallbacks exist for a checkout
- * where the build has not run yet.
+ * `scripts/stage-ui.mjs` copies it there during the build. That is what makes
+ * the released package self-contained — an installed plugin carries its UI and
+ * never has to know where the monorepo put anything.
+ *
+ * The relative fallback exists for a checkout where the build has not run yet.
+ * There is deliberately NO `require.resolve("@wbaw/core/…")` fallback: core is
+ * `private` and unpublished, `esbuild.mjs` inlines it into this file, so at
+ * runtime there is no `@wbaw/core` to resolve. Asking for it would only leave a
+ * dead reference to an installable-nothing package in the shipped bundle.
  */
 function resolveUiDist(): string | null {
-  // 1. Our own staged copy: <plugin>/lib/webui.js → <plugin>/ui-dist.
+  // 1. Our own staged copy: <plugin>/lib/index.js → <plugin>/ui-dist.
   const own = path.resolve(here, "..", "ui-dist");
   if (fs.existsSync(own)) return own;
-  // 2. Dev checkout without a build step: <core>/ui-dist via the workspace.
-  try {
-    const corePkg = require.resolve("@wbaw/core/package.json");
-    const candidate = path.join(path.dirname(corePkg), "ui-dist");
-    if (fs.existsSync(candidate)) return candidate;
-  } catch {
-    /* fall through */
-  }
-  // 3. Monorepo layout: <plugin>/lib/webui.js → ../../core/ui-dist.
+  // 2. Monorepo layout: <plugin>/lib/index.js → ../../core/ui-dist.
   const mono = path.resolve(here, "..", "..", "core", "ui-dist");
   if (fs.existsSync(mono)) return mono;
   return null;
