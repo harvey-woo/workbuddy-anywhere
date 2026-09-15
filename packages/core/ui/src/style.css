@@ -147,6 +147,37 @@ body {
   color: var(--wb-danger);
 }
 
+/* Compact borderless button for a single glyph (copy, remove, …). Sized to the
+   line box so it can sit inline after text without pushing the baseline down. */
+.wb-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: var(--wb-radius-sm);
+  background: transparent;
+  color: var(--wb-muted);
+  cursor: pointer;
+  vertical-align: -4px;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.wb-icon-btn:hover:not(:disabled) {
+  color: var(--wb-text);
+  background: var(--wb-panel-2);
+}
+.wb-icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.wb-icon-btn svg {
+  display: block;
+  width: 13px;
+  height: 13px;
+}
+
 .wb-input,
 .wb-select {
   width: 100%;

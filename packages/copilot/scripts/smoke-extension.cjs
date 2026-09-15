@@ -24,6 +24,15 @@ const path = require("path");
 
 const BUNDLE = path.join(__dirname, "..", "out", "extension.js");
 
+/**
+ * The RPC channel between the management page and its host.
+ *
+ * Mirrors `RPC_CHANNEL` in core's `src/rpc.ts`. A wrong value is not silent:
+ * the host handler returns early on an unknown channel, so no reply is posted
+ * and the checks that use it fail with "no reply to …".
+ */
+const RPC_CHANNEL = "workbuddy-rpc";
+
 // ── The throwaway workspace ─────────────────────────────────────────────
 
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "wb-ext-smoke-"));
@@ -82,7 +91,7 @@ const settings = {
   thinkingEffort: "auto",
   visionFallbackModel: "",
   customModels: [],
-  enabled: true,
+  enabledByRegion: { cn: true, intl: true },
 };
 
 class EventEmitter {
@@ -167,7 +176,12 @@ const vscode = {
   lm: {
     registerLanguageModelChatProvider(vendor, provider) {
       registered.providers.set(vendor, provider);
-      return disposable();
+      // Deleting on dispose matters now: the extension applies
+      // `settings.enabledByRegion` by adding and removing these registrations,
+      // so the Map has to reflect what is LIVE rather than what has ever been
+      // registered. The real host behaves the same way — the docs for this
+      // call say the disposable "unregisters the provider when disposed".
+      return disposable(() => registered.providers.delete(vendor));
     },
     selectChatModels: async () => [],
   },
@@ -179,13 +193,43 @@ const vscode = {
       const panel = {
         viewType,
         title,
+        /**
+         * The webview half of the RPC bridge.
+         *
+         * `onDidReceiveMessage` stores the host handler here instead of
+         * discarding it, and `webview.postMessage` records replies — together
+         * they let a test drive the SAME path the management page uses
+         * (post a `workbuddy-rpc` envelope, get a reply), which is the only way
+         * to prove that path works independently of the command palette.
+         */
+        onMessage: undefined,
+        replies: [],
+        async send(message) {
+          assert.ok(panel.onMessage, "the panel never subscribed to messages");
+          await panel.onMessage(message);
+        },
         webview: {
           html: "",
           asWebviewUri: (uri) => ({ toString: () => uri.toString(), fsPath: uri.fsPath }),
-          onDidReceiveMessage: () => disposable(),
-          postMessage: async () => true,
+          onDidReceiveMessage: (cb) => {
+            panel.onMessage = cb;
+            return disposable();
+          },
+          postMessage: async (m) => {
+            panel.replies.push(m);
+            return true;
+          },
         },
-        reveal() {},
+        /**
+         * Counted, because "opened the page" has two honest outcomes: the first
+         * call creates the panel, later ones reveal the one that already exists.
+         * A test that only watched `panels.length` would read a reveal as a
+         * no-op and call the command broken.
+         */
+        reveals: 0,
+        reveal() {
+          this.reveals += 1;
+        },
         onDidDispose: () => disposable(),
         dispose() {},
       };
@@ -319,10 +363,18 @@ async function main() {
     });
   });
 
-  await check("BOTH model groups are registered (codebuddy + codebuddy-intl)", () => {
+  await check("BOTH model groups are registered (codebuddy + codebuddy-intl)", async () => {
     // Two vendors, not one: the picker lists them separately so a model from
     // one cluster never appears under the other, and so the user can tell
     // which quota a request will spend.
+    //
+    // Registration is applied from `settings.enabledByRegion`, which is read
+    // asynchronously on activation — so wait for it rather than assuming the
+    // synchronous registration an earlier version did.
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline && registered.providers.size < 2) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
     assert.deepStrictEqual(
       [...registered.providers.keys()].sort(),
       ["codebuddy", "codebuddy-intl"],
@@ -330,26 +382,63 @@ async function main() {
     );
   });
 
-  await check("the commands VS Code advertises all exist", () => {
-    const expected = [
-      "codebuddy.manageProvider",
-      "codebuddy-intl.manageProvider",
-      "codebuddy.menu",
-      "codebuddy.login",
-      "codebuddy.logout",
-      "codebuddy.showUsage",
-      "codebuddy.settings",
-      "codebuddy.refreshModels",
-      "codebuddy.toggleProvider",
-      "codebuddy.selectVisionFallback",
-      // Wired to the hover card's footer links. They are deliberately NOT
-      // declared in package.json: they are the card's buttons, not palette
-      // commands, and listing them would offer two ways to do one thing.
-      "codebuddy.refreshUsage",
-      "codebuddy.checkinAll",
-    ];
-    for (const id of expected) {
-      assert.ok(registered.commands.has(id), `missing command: ${id}`);
+  await check("the manifest and the runtime agree about which commands exist", () => {
+    // The manifest is what VS Code offers in the palette; the runtime is what
+    // can actually answer. Either direction of mismatch is a defect — a
+    // palette entry that throws, or a command nobody can reach.
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf-8")
+    );
+    const declared = (manifest.contributes?.commands ?? []).map((c) => c.command);
+    const runtime = [...registered.commands.keys()].sort();
+
+    assert.deepStrictEqual(
+      declared,
+      ["codebuddy.openPanel", "codebuddy.manageProvider"],
+      "both panel entry points must be declared: the palette command and the gears' hook"
+    );
+
+    // Declared is not the same as visible. The gears' hook has to be declared so
+    // the manifest's `managementCommand` resolves, but it must be hidden from the
+    // palette or the page gets a second entry that silently switches clusters.
+    // This asserts the VISIBLE set, which is what the user actually sees.
+    const hidden = (manifest.contributes?.menus?.commandPalette ?? [])
+      .filter((m) => m.when === "false")
+      .map((m) => m.command);
+    assert.deepStrictEqual(
+      hidden,
+      ["codebuddy.manageProvider"],
+      "the gears' hook must be the only palette-hidden command"
+    );
+    assert.deepStrictEqual(
+      declared.filter((id) => !hidden.includes(id)),
+      ["codebuddy.openPanel"],
+      "the palette should expose exactly one entry — everything else moved into the page"
+    );
+
+    // Wired to the hover card's footer links. Deliberately NOT declared: they
+    // are the card's buttons, and a palette entry would offer a second,
+    // context-free way to do the same thing.
+    const hoverOnly = ["codebuddy.checkinAll", "codebuddy.refreshUsage"];
+    assert.deepStrictEqual(
+      runtime.filter((id) => !declared.includes(id)),
+      hoverOnly,
+      "unexpected runtime-only command(s)"
+    );
+
+    // Both vendors' picker gears must resolve, or the gear renders and does
+    // nothing. VS Code ignores `managementCommand` unless the manifest also
+    // leaves the provider-level `configuration` out (see chatModelsWidget).
+    for (const p of manifest.contributes?.languageModelChatProviders ?? []) {
+      assert.ok(
+        declared.includes(p.managementCommand),
+        `${p.vendor}: managementCommand "${p.managementCommand}" is not a declared command`
+      );
+      assert.strictEqual(
+        p.configuration,
+        undefined,
+        `${p.vendor}: a provider-level configuration makes VS Code IGNORE managementCommand`
+      );
     }
   });
 
@@ -362,12 +451,38 @@ async function main() {
     // QuickPick that can only show a subset of it.
     const handler = registered.commands.get(statusBar.command);
     assert.ok(handler, `status bar is wired to an unknown command: ${statusBar.command}`);
-    assert.strictEqual(statusBar.command, "codebuddy.manageProvider");
+    assert.strictEqual(
+      statusBar.command,
+      "codebuddy.openPanel",
+      "the status bar must use the user-facing entry, not the gears' hook — a click carries no vendor"
+    );
 
     const before = panels.length;
     await handler();
     assert.strictEqual(panels.length, before + 1, "no management panel was opened");
     assert.match(panels[panels.length - 1].title, /WorkBuddy Anywhere/);
+  });
+
+  await check("the palette entry opens the page and leaves the region alone", async () => {
+    // A user typing "open panel" makes no claim about which cluster they are
+    // working with, so this path must NOT carry the gears' vendor semantics. And
+    // a second invocation must reveal the page rather than stack another one.
+    const open = registered.commands.get("codebuddy.openPanel");
+    assert.ok(open, "the palette command is not registered");
+
+    const original = settings.region;
+    settings.region = "intl";
+    const before = panels.length;
+    await open();
+
+    assert.strictEqual(panels.length, before, "a second panel was opened");
+    assert.strictEqual(
+      panels[panels.length - 1].reveals,
+      1,
+      "the existing page was not revealed"
+    );
+    assert.strictEqual(settings.region, "intl", "opening the page must not move the region");
+    settings.region = original;
   });
 
   await check("that page talks to the HOST, not over http", async () => {
@@ -705,6 +820,164 @@ async function main() {
     assert.ok(
       billingCalls.length > 0,
       "switching region did not re-read any quota — the card would show the old cluster's numbers"
+    );
+  });
+
+  // ── the model group really is controlled by the setting ───────────────
+  //
+  // The switch lives on the Models tab and writes `settings.enabledByRegion`
+  // over RPC; `service.onChange` fans that out to `syncModelGroup`, which adds
+  // or removes that vendor's providers. That is the WHOLE path — the palette
+  // has a single entry and it only opens the page — so these checks cover the
+  // control end to end.
+  //
+  // Before this worked, the setting only made core refuse chat, and only while
+  // auto-select was off, so the switch looked inert in half the configurations.
+  console.log("the model-group switch controls the group");
+
+  /** Poll until `predicate` holds, or give up. */
+  async function waitFor(predicate, what, ms = 5_000) {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline && !predicate()) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    assert.ok(predicate(), `timed out waiting for ${what}`);
+  }
+
+  /** Post one RPC envelope at the panel, exactly as the page does. */
+  async function rpc(method, params, id) {
+    const panel = panels[panels.length - 1];
+    const before = panel.replies.length;
+    await panel.send({ channel: RPC_CHANNEL, id, method, params });
+    const reply = panel.replies.slice(before).find((m) => m.id === id);
+    assert.ok(reply, `no reply to ${method} — wrong channel, or the handler bailed`);
+    assert.ok(!reply.error, `${method} failed: ${reply.error?.message}`);
+    return reply.result;
+  }
+
+  /** Provider instances as they were before the toggle, for an identity check. */
+  const providersBefore = new Map(registered.providers);
+
+  await check("switching a region OFF withdraws ONLY that region's provider", async () => {
+    assert.strictEqual(providersBefore.size, 2, "expected two providers to start with");
+    // The Models page writes the whole map (it owns both keys), so send the
+    // same shape it does: CN off, Global left alone.
+    await rpc("updateSettings", { enabledByRegion: { cn: false, intl: true } }, 9001);
+
+    // The write fans out asynchronously, so the assertion has to wait rather
+    // than read the Map immediately.
+    await waitFor(
+      () => !registered.providers.has("codebuddy"),
+      "the CN provider to be unregistered"
+    );
+    // The heart of the change: the two clusters are independent groups, so
+    // switching one off must not touch the other. A shared flag would fail
+    // here, and the user would see the Models page's switch "stick" when they
+    // changed region.
+    assert.strictEqual(
+      registered.providers.get("codebuddy-intl"),
+      providersBefore.get("codebuddy-intl"),
+      "the Global provider was withdrawn too — the two regions are not independent"
+    );
+    assert.deepStrictEqual(
+      settings.enabledByRegion,
+      { cn: false, intl: true },
+      "the setting itself must have been written, not just the registration"
+    );
+  });
+
+  await check("switching it back ON re-registers the SAME provider instance", async () => {
+    await rpc("updateSettings", { enabledByRegion: { cn: true, intl: true } }, 9002);
+    await waitFor(() => registered.providers.size === 2, "the providers to come back");
+    assert.deepStrictEqual(
+      [...registered.providers.keys()].sort(),
+      ["codebuddy", "codebuddy-intl"],
+      "the same two vendors must return"
+    );
+    // Identity, not equality: disposing a REGISTRATION must not dispose the
+    // provider, or its cached catalog and emitters are gone and the picker
+    // comes back empty until the next refresh. Global was never withdrawn, so
+    // it must be the very same object it was before anything was switched.
+    for (const [vendor, provider] of providersBefore) {
+      assert.strictEqual(
+        registered.providers.get(vendor),
+        provider,
+        `${vendor}: re-registration created a new provider — the cached catalog was dropped`
+      );
+    }
+  });
+
+  await check("each region's group follows its OWN flag", async () => {
+    // Front-to-back: Global off, CN on — and assert the host really is in that
+    // state rather than trusting the two calls above.
+    await rpc("updateSettings", { enabledByRegion: { cn: true, intl: false } }, 9003);
+    await waitFor(
+      () => !registered.providers.has("codebuddy-intl"),
+      "only the Global provider to be withdrawn"
+    );
+    assert.ok(
+      registered.providers.has("codebuddy"),
+      "the CN provider was withdrawn — the switch is not keyed by region"
+    );
+
+    // Restore, so later checks see the baseline the fixture declared.
+    await rpc("updateSettings", { enabledByRegion: { cn: true, intl: true } }, 9004);
+    await waitFor(() => registered.providers.size === 2, "both providers to return");
+  });
+
+  await check("an install from before the split keeps its choice", async () => {
+    // The path that actually ships: VS Code keeps these under `codebuddy.*`, so
+    // an install that predates the per-region split has `enabled` and no
+    // `enabledByRegion`. Reading it as the seed is what stops a group the user
+    // deliberately hid from reappearing on upgrade — and the read goes through
+    // the REAL adapter, so this fails if only the file store migrates.
+    const fixture = settings.enabledByRegion;
+    delete settings.enabledByRegion;
+    settings.enabled = false;
+
+    const migrated = await rpc("getState", {}, 9005);
+    assert.deepStrictEqual(
+      migrated.settings.enabledByRegion,
+      { cn: false, intl: false },
+      "the legacy global `enabled` was not used as the seed"
+    );
+
+    // And it must stop mattering the moment a real per-region choice exists,
+    // or the user could never turn one back on.
+    settings.enabledByRegion = { cn: true, intl: true };
+    const explicit = await rpc("getState", {}, 9006);
+    assert.deepStrictEqual(
+      explicit.settings.enabledByRegion,
+      { cn: true, intl: true },
+      "the legacy flag overrode an explicit per-region choice"
+    );
+
+    delete settings.enabled;
+    settings.enabledByRegion = fixture;
+  });
+
+  await check("the picker's gear for a vendor targets THAT cluster", async () => {
+    // VS Code invokes a provider's `managementCommand` as
+    // `executeCommand(cmd, vendor.vendor)` — the argument is the only thing that
+    // distinguishes the two gears, because both vendors point at the same
+    // command. Ignoring it (as an earlier version did) meant clicking the gear
+    // beside the Global group opened a page that could be showing CN.
+    const open = registered.commands.get("codebuddy.manageProvider");
+    assert.ok(open, "the management command is not registered");
+
+    settings.region = "cn";
+    await open("codebuddy-intl");
+    assert.strictEqual(
+      await awaitRegion("intl"),
+      "intl",
+      "the Global gear must switch the tracked region to intl"
+    );
+
+    await open("codebuddy");
+    assert.strictEqual(
+      await awaitRegion("cn"),
+      "cn",
+      "the CN gear must switch it back"
     );
   });
 

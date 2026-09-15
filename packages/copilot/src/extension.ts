@@ -21,6 +21,7 @@
 
 import * as vscode from "vscode";
 import type { WorkbuddyService } from "@wbaw/core";
+import type { Region } from "@wbaw/core";
 import { showManagementPanel } from "./management-panel";
 import { CodeBuddyChatProvider } from "./provider";
 import { AccountStatusBar } from "./status-bar";
@@ -34,6 +35,24 @@ function info(message: string): void {
   } catch {
     // Logging must never break activation.
   }
+}
+
+/**
+ * Picker vendor id → cluster.
+ *
+ * One table, because two places need the same fact: the group switch in
+ * `activate` and the vendor argument of `codebuddy.manageProvider` (VS Code
+ * passes the vendor to a provider's `managementCommand`). Held separately they
+ * can disagree — and a gear that opens the cluster the switch just hid is what
+ * that disagreement looks like from the outside.
+ */
+const VENDOR_REGION: ReadonlyMap<string, Region> = new Map([
+  ["codebuddy", "cn"],
+  ["codebuddy-intl", "intl"],
+]);
+
+function regionOfVendor(vendor: string): Region | undefined {
+  return VENDOR_REGION.get(vendor);
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -64,23 +83,94 @@ export function activate(context: vscode.ExtensionContext): void {
   // rejects the duplicate. Registering independently means whichever vendor is
   // free still comes up, and the log says which one did not — instead of the
   // picker silently missing half its models.
-  for (const [vendor, provider] of [
-    ["codebuddy", cnProvider],
-    ["codebuddy-intl", intlProvider],
-  ] as const) {
-    try {
-      context.subscriptions.push(
-        vscode.lm.registerLanguageModelChatProvider(vendor, provider)
-      );
-    } catch (err) {
-      info(
-        `could not register the "${vendor}" vendor: ${
-          err instanceof Error ? err.message : String(err)
-        } — another installed copy of this extension may still own it ` +
-          `(check ~/.vscode/extensions for an older version directory)`
-      );
+  // One entry per picker vendor, derived from the vendor→region table above so
+  // the two can never drift. The PROVIDER objects outlive their registrations
+  // (see `registrations` below).
+  const providers: Record<Region, CodeBuddyChatProvider> = {
+    cn: cnProvider,
+    intl: intlProvider,
+  };
+  const VENDORS = [...VENDOR_REGION].map(([vendor, region]) => ({
+    vendor,
+    region,
+    provider: providers[region],
+  }));
+
+  /**
+   * Live registrations, keyed by vendor. Empty while the group is withdrawn.
+   *
+   * The PROVIDER objects outlive these: disposing a registration only
+   * unsubscribes it from the LM namespace, while the provider keeps its catalog
+   * and its emitters, so re-registering brings the same models back without a
+   * refetch. That is why the providers are disposed separately (they are in
+   * `context.subscriptions`).
+   */
+  const registrations = new Map<string, vscode.Disposable>();
+
+  /**
+   * Offer or withdraw each model group, per region.
+   *
+   * VS Code has no "hide this vendor" flag: the ONLY way to take a group out of
+   * the model picker is to unregister its provider, so the setting is applied
+   * by disposing and recreating that vendor's registration. That is what makes
+   * this a real control rather than a flag nothing reads.
+   *
+   * Per vendor rather than one global switch, because the two clusters are two
+   * independent groups in the picker: a user may want the CN models without a
+   * second cluster cluttering the list, or the reverse.
+   *
+   * `registrations` IS the state, so this is idempotent by construction and
+   * carries no "last value" memory to go stale — `onChange` fires for every
+   * settings write and every quota refresh.
+   */
+  function syncModelGroup(byRegion: { cn: boolean; intl: boolean }): void {
+    for (const { vendor, region, provider } of VENDORS) {
+      const wanted = byRegion[region] !== false;
+      const live = registrations.get(vendor);
+      if (wanted === !!live) continue;
+
+      if (!wanted) {
+        live?.dispose();
+        registrations.delete(vendor);
+        info(`model group "${vendor}" withdrawn — provider unregistered`);
+        continue;
+      }
+
+      try {
+        registrations.set(
+          vendor,
+          vscode.lm.registerLanguageModelChatProvider(vendor, provider)
+        );
+        info(`model group "${vendor}" offered`);
+      } catch (err) {
+        info(
+          `could not register the "${vendor}" vendor: ${
+            err instanceof Error ? err.message : String(err)
+          } — another installed copy of this extension may still own it ` +
+            `(check ~/.vscode/extensions for an older version directory)`
+        );
+      }
     }
   }
+
+  /** Re-read the setting and apply it. Safe to call as often as onChange fires. */
+  function syncModelGroupFromSettings(): void {
+    void service
+      .getSettings()
+      .then((settings) => syncModelGroup(settings.enabledByRegion))
+      .catch(() => {});
+  }
+
+  // Apply immediately so a stored `false` never lets a hidden group flash into
+  // the picker on activation, then hand the registrations to the context so
+  // they are released with the extension.
+  syncModelGroupFromSettings();
+  context.subscriptions.push({
+    dispose: () => {
+      for (const registration of registrations.values()) registration.dispose();
+      registrations.clear();
+    },
+  });
 
   // The whole extension tracks whichever vendor the user is actually chatting
   // with: send through the `codebuddy-intl` picker entry and the region — the
@@ -134,12 +224,16 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push({
     dispose: service.onChange(() => {
+      // One fan-out, three reactions: the catalogs may have changed, the bar
+      // shows the region the user is on, and the model-group toggle may have
+      // been flipped from the management page.
       void refreshCatalogs(cnProvider, intlProvider, service);
       void status.refresh();
+      syncModelGroupFromSettings();
     }),
   });
 
-  registerCommands(context, service, cnProvider, intlProvider, status);
+  registerCommands(context, service, status);
 
   void service
     .init({ autoCheckin: true })
@@ -189,15 +283,23 @@ export function deactivate(): void {
 function registerCommands(
   context: vscode.ExtensionContext,
   service: WorkbuddyService,
-  cnProvider: CodeBuddyChatProvider,
-  intlProvider: CodeBuddyChatProvider,
   status: AccountStatusBar
 ): void {
-  const register = (id: string, handler: () => unknown): void => {
+  /**
+   * Register a command, forwarding its arguments.
+   *
+   * Args matter for one caller in particular: VS Code passes the VENDOR to a
+   * provider's `managementCommand`
+   * (`commandService.executeCommand(cmd, vendor.vendor)`), which is how the
+   * gear beside a model group in the picker knows which cluster it belongs to.
+   * The host wrapper used to drop arguments on the floor, so both gears were
+   * indistinguishable.
+   */
+  const register = (id: string, handler: (...args: unknown[]) => unknown): void => {
     context.subscriptions.push(
-      vscode.commands.registerCommand(id, async () => {
+      vscode.commands.registerCommand(id, async (...args: unknown[]) => {
         try {
-          await handler();
+          await handler(...args);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           info(`${id} failed: ${message}`);
@@ -209,44 +311,53 @@ function registerCommands(
     );
   };
 
-  // The status bar and the command palette both land here.
-  const openPage = (route: Parameters<typeof showManagementPanel>[2]) => () =>
-    showManagementPanel(context, service, route);
-
-  register("codebuddy.manageProvider", openPage("accounts"));
-  register("codebuddy-intl.manageProvider", openPage("accounts"));
-  register("codebuddy.menu", openPage("accounts"));
-  register("codebuddy.login", openPage("login"));
-  register("codebuddy.showUsage", openPage("accounts"));
-  register("codebuddy.settings", openPage("settings"));
-
-  register("codebuddy.logout", async () => {
-    const state = await service.getState();
-    if (state.accounts.length === 0) {
-      void vscode.window.showInformationMessage("WorkBuddy Anywhere: no account is signed in.");
-      return;
+  /**
+   * The one place that opens the management page.
+   *
+   * `vendor` is only ever supplied by a host, never by a user. VS Code invokes a
+   * provider's `managementCommand` as `executeCommand(cmd, vendor.vendor)`, and
+   * that argument is what makes the gear honest: without it, clicking the gear
+   * beside the Global group opened a page that could be showing CN. Switching
+   * here follows the same rule as sending a chat through that vendor — the page
+   * reflects the cluster you are actually working with.
+   *
+   * A user-driven entry passes nothing and lands on whatever cluster is already
+   * active, which is why the two callers below are not the same command.
+   *
+   * The page itself replaced ten palette commands — six of which only opened it
+   * on a particular tab, which its own tabs already do, and one of which was
+   * named "Sign Out" while doing nothing of the sort.
+   */
+  const openPanel = async (vendor?: unknown): Promise<void> => {
+    const region = typeof vendor === "string" ? regionOfVendor(vendor) : undefined;
+    if (region) {
+      const settings = await service.getSettings();
+      if (settings.region !== region) await service.updateSettings({ region });
     }
-    // No picker: the page lists every account with its quota, which is a far
-    // better basis for "which one do I remove?" than a bare list of names.
     await showManagementPanel(context, service, "accounts");
-  });
+  };
 
-  register("codebuddy.refreshModels", async () => {
-    // Refresh BOTH clusters — toggling a model group off only on CN would
-    // leave the Global picker showing stale state. The toggle command itself
-    // operates on `settings.enabled`, which is region-agnostic.
-    const cn = await service.refreshModels("cn");
-    const intl = await service.refreshModels("intl");
-    cnProvider.setModels(cn);
-    intlProvider.setModels(intl);
-    void vscode.window.showInformationMessage(
-      `WorkBuddy Anywhere: ${cn.length} CN, ${intl.length} Global models.`
-    );
-  });
+  // The palette entry, named for what the user asks for rather than for what the
+  // page happens to contain, so typing "open" finds it. No vendor: opening the
+  // page is not a statement about which cluster you are working with.
+  register("codebuddy.openPanel", async () => openPanel());
 
-  // Wired to the hover card's "refresh" link. Re-reads quota for every
-  // account so the numbers the user is looking at are the ones they just
-  // asked for — the background tick is 60s and a hover is a deliberate act.
+  // The providers' `managementCommand`; both vendors point here. Declared so the
+  // manifest's reference resolves, and hidden from the palette because it is the
+  // gear's hook — leaving it visible would give the page a second, worse entry
+  // that silently switches clusters.
+  register("codebuddy.manageProvider", async (vendor?: unknown) => openPanel(vendor));
+
+  // ── Wired to the hover card, NOT to the palette ────────────────────────
+  //
+  // Deliberately absent from `contributes.commands`. They exist as the two
+  // buttons under the status-bar hover, where they are one click from the
+  // numbers they act on; listing them in the palette would offer a second,
+  // context-free way to do the same thing.
+
+  // Re-reads quota for every account so the numbers the user is looking at are
+  // the ones they just asked for — the background tick is 60s, and a hover is a
+  // deliberate act.
   register("codebuddy.refreshUsage", async () => {
     await service.refreshAllUsage();
   });
@@ -274,23 +385,5 @@ function registerCommands(
       `WorkBuddy Anywhere: checked in ${claimed} account(s)` +
         (credit > 0 ? `, +${credit} credits` : ".")
     );
-  });
-
-  register("codebuddy.toggleProvider", async () => {
-    const settings = await service.getSettings();
-    await service.updateSettings({ enabled: !settings.enabled });
-    cnProvider.notifyChanged();
-    intlProvider.notifyChanged();
-    void vscode.window.showInformationMessage(
-      `CodeBuddy model group ${settings.enabled ? "disabled" : "enabled"}.`
-    );
-  });
-
-  // Kept as a command so existing keybindings keep working. The list itself is
-  // rendered by the management page, which asks this extension for the models
-  // registered in VS Code's LM namespace — so every entry is selectable, not
-  // just the ones a native QuickPick could present.
-  register("codebuddy.selectVisionFallback", async () => {
-    await showManagementPanel(context, service, "settings");
   });
 }

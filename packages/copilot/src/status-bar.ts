@@ -251,8 +251,10 @@ export class AccountStatusBar {
     this.service = service;
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 90);
     // Clicking opens the management page — the only place a region can be
-    // switched, an account picked, or a check-in claimed in full.
-    this.item.command = "codebuddy.manageProvider";
+    // switched, an account picked, or a check-in claimed in full. It uses the
+    // palette entry, not the gears' hook: a click here carries no vendor, so it
+    // must not be read as "the user chose this cluster".
+    this.item.command = "codebuddy.openPanel";
     this.item.text = ICON;
     this.item.show();
 

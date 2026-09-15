@@ -153,6 +153,9 @@ async function renderHtml(
   return injectConfig(html, {
     transport: "vscode",
     version: context.extension?.packageJSON?.version as string | undefined,
+    // This extension unregisters its LanguageModelChatProviders when the group
+    // is switched off, so the Models page's control is real here.
+    canToggleModelGroup: true,
   });
 }
 

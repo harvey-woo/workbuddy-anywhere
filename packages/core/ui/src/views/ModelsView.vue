@@ -18,10 +18,12 @@ import {
   state,
 } from "../lib/store";
 import { compact } from "../lib/format";
+import { runtimeConfig } from "../lib/config";
 import ToggleSwitch from "../components/ToggleSwitch.vue";
 import { useI18n } from "../lib/i18n";
 
 const { t } = useI18n();
+const cfg = runtimeConfig();
 
 const filter = ref("");
 const newId = ref("");
@@ -59,8 +61,6 @@ const rows = computed<ModelRow[]>(() => {
   }
   return out;
 });
-
-const offCount = computed(() => rows.value.filter((r) => !r.on).length);
 
 const filtered = computed(() => {
   const q = filter.value.trim().toLowerCase();
@@ -128,14 +128,6 @@ function costLabel(raw: string | undefined): string {
   return /^[0-9]+(?:\.[0-9]+)?$/.test(trimmed) ? `${trimmed}×` : raw.trim();
 }
 
-const sourceNote = computed(() => {
-  const s = state.value;
-  if (!s) return "";
-  if (s.modelsSource === "auth") return t("models.sourceFromAccount");
-  if (s.modelsSource === "anonymous") return t("models.sourcePublic");
-  return t("models.sourceUnavailable");
-});
-
 async function withBusy(label: string, fn: () => Promise<void>): Promise<void> {
   busyLabel.value = label;
   await run(fn);
@@ -167,9 +159,23 @@ const remove = (id: string): Promise<void> =>
     await refreshState();
   });
 
+/**
+ * Flip the CURRENT region's model group.
+ *
+ * The two clusters are independent groups in every host's picker, so this
+ * writes only the key for the region the page is showing — switching the
+ * sidebar region and watching this switch follow is the whole point.
+ *
+ * The whole map is sent, not just the one key: hosts merge the per-region maps
+ * per key, and sending both keeps this correct even against a host that
+ * replaced the object wholesale.
+ */
 const setEnabled = (value: boolean): Promise<void> =>
   withBusy("toggle", async () => {
-    await call("updateSettings", { enabled: value });
+    const current = settings.value?.enabledByRegion ?? { cn: true, intl: true };
+    const next =
+      region.value === "cn" ? { ...current, cn: value } : { ...current, intl: value };
+    await call("updateSettings", { enabledByRegion: next });
     await refreshState();
   });
 </script>
@@ -190,9 +196,18 @@ const setEnabled = (value: boolean): Promise<void> =>
       </button>
     </div>
 
-    <div class="wb-card mb-4 p-4">
+    <!--
+      Only offered where the host can act on it. `canToggleModelGroup` is set by
+      the VS Code extension and the dsh plugin, which really do add and remove
+      their providers; the desktop app and the standalone server do not, and a
+      switch that flips a flag nothing reads is worse than no switch.
+
+      The value is read for the region the page is showing, because the two
+      clusters are two independent groups in the picker.
+    -->
+    <div v-if="cfg.canToggleModelGroup" class="wb-card mb-4 p-4">
       <ToggleSwitch
-        :model-value="settings?.enabled ?? true"
+        :model-value="settings?.enabledByRegion?.[region] ?? true"
         :label="t('models.offerToHost')"
         :hint="t('models.offerHint')"
         :disabled="!!busyLabel"
@@ -204,14 +219,15 @@ const setEnabled = (value: boolean): Promise<void> =>
       <div class="mb-2 flex items-baseline justify-between">
         <div class="text-[12.5px] font-medium">
           {{ t('models.title') }}
-          <span class="wb-pill ml-1">{{ t('models.modelCount', { count: String(models.length) }) }}</span>
-          <span v-if="offCount" class="wb-pill ml-1">{{ t('models.offCount', { count: String(offCount) }) }}</span>
+          <span class="wb-pill ml-1">{{
+            t('models.modelCount', {
+              on: String(models.length),
+              total: String(rows.length),
+            })
+          }}</span>
         </div>
         <input v-model="filter" class="wb-input max-w-[220px]" :placeholder="t('models.filterPlaceholder')" />
       </div>
-      <div class="text-[11.5px] mb-3" :style="{ color: 'var(--wb-muted)' }"
-        >{{ sourceNote }} {{ t('models.sourceNote') }}</div
-      >
       <!-- min-w-max + overflow-x-auto: the table keeps its natural column
            widths so capabilities pills never wrap; the wrapper scrolls
            horizontally on narrow viewports. -->

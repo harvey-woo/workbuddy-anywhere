@@ -295,26 +295,15 @@ export async function startApiServer(opts: ApiServerOptions): Promise<ApiServerH
     }
 
     // Fail before committing to a 200 stream: once SSE headers are out we can
-    // no longer answer with a real status code, and the two most common
-    // failures (not signed in, group disabled) are exactly the ones a client
-    // should be able to act on. Auto-select aware: with the toggle on, a dead
-    // ACTIVE account must not fail requests another account could serve.
+    // no longer answer with a real status code, and the most common failure
+    // (not signed in) is exactly the one a client should be able to act on.
+    // Auto-select aware: with the toggle on, a dead ACTIVE account must not
+    // fail requests another account could serve.
+    //
+    // `settings.enabledByRegion` is NOT checked here — it controls whether a
+    // group is registered with a host's model picker, and this HTTP surface is
+    // a client rather than a picker. See the field's doc comment in settings.ts.
     await service.ensureChatReady(accountKey, route.region);
-    const settings = await service.getSettings();
-    // Auto-select outranks the group toggle: with auto on, the toggle only
-    // hides the group from pickers, it does not block API requests.
-    if (!settings.enabled && !settings.autoSelectAccount) {
-      sendJson(
-        res,
-        409,
-        protocol.error(
-          "The WorkBuddy model group is disabled in the management page.",
-          "invalid_request_error",
-          "group_disabled"
-        )
-      );
-      return;
-    }
 
     const codec = protocol.create(request.model);
     const controller = new AbortController();

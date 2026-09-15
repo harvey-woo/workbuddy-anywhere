@@ -1,7 +1,7 @@
 {
   "name": "@wbaw/desktop",
   "productName": "WorkBuddy Anywhere",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "private": true,
   "description": "WorkBuddy Anywhere for the desktop: sign in once, then manage every account and its remaining quota from a menu-bar app that keeps them all alive.",
   "license": "MIT",

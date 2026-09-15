@@ -21,7 +21,7 @@
 import { computed, ref } from "vue";
 import en from "./locales/en";
 import zh from "./locales/zh";
-import { runtimeConfig } from "./config";
+import { isVsCodeWebview, runtimeConfig } from "./config";
 
 export type Locale = "en" | "zh";
 
@@ -36,8 +36,13 @@ function normalize(tag: string | undefined | null): Locale | undefined {
   return tag.toLowerCase().startsWith("zh") ? "zh" : tag.toLowerCase().startsWith("en") ? "en" : undefined;
 }
 
+/** A language chosen in Settings. Outranks the ambient signals until a host pushes. */
+let override: Locale | null = null;
+
 /** Resolve the locale from every host signal, in priority order. */
 function resolveLocale(): Locale {
+  // 0. An explicit choice from Settings wins over the ambient signals below.
+  if (override) return override;
   return (
     normalize(runtimeConfig().locale) ??
     normalize(document.documentElement.lang) ??
@@ -79,7 +84,27 @@ export function initLocale(): void {
  * Apply a locale pushed by a host (dsh's frame forwarding its own language).
  */
 export function setLocale(next: Locale): void {
+  // The host outranks a stored preference — otherwise a user's old pick here
+  // would silently beat the host they are currently embedded in.
+  override = null;
   applyLocale(next);
+}
+
+/** Apply a choice made in Settings. */
+export function chooseLocale(next: Locale): void {
+  override = next;
+  applyLocale(next);
+}
+
+/**
+ * Whether a host has already decided the language, making a picker pointless.
+ *
+ * True when the host injects a value (dsh, whose iframe cannot be reached
+ * through `documentElement.lang`) or in the VS Code webview, where the
+ * workbench owns `documentElement.lang` and rewrites it on a language change.
+ */
+export function isHostControlledLocale(): boolean {
+  return runtimeConfig().locale !== undefined || isVsCodeWebview();
 }
 
 /**
@@ -93,6 +118,7 @@ export function setLocale(next: Locale): void {
 export function applyHostLocale(tag: string): boolean {
   const next = normalize(tag);
   if (!next) return false;
+  override = null;
   applyLocale(next);
   return true;
 }

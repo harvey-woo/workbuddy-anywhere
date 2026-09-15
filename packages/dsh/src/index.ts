@@ -97,29 +97,89 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   const providers = config.providers ?? ROUTES.map((r) => r.route);
-  for (const r of ROUTES) {
-    if (!providers.includes(r.route)) continue;
+  const active = ROUTES.filter((r) => providers.includes(r.route));
+
+  /**
+   * One registration handle per route, for the adapter and for the provider
+   * directory.
+   *
+   * The handles are what make the per-region flags real controls here: dsh has
+   * no "hide this provider" flag either, so the group is taken out of the model
+   * picker by emptying these registrations. `replace([])` is atomic (the API
+   * swaps route sets in one synchronous section, so no request observes a gap)
+   * and deliberately legal, which is exactly the "a settings section that
+   * emptied holds zero routes while staying registered" case. Disposing them
+   * instead would work once, but leaves nothing to restore.
+   */
+  const routeHandles = active.map((r) => {
     const adapter = new WorkbuddyAdapter(service, r.route, r.region);
-    // Effect-based registration (HMR-safe): disposed automatically on unload.
-    ctx.llm.registerAdapter([r.route], adapter);
-    // Makes WorkBuddy appear as a configurable provider in dsh's Models page —
-    // the dsh equivalent of "writing the model list into config".
-    ctx.llm.registerConfigurableProviders([
-      { provider: r.route, displayName: r.displayName, settingsNs: name, settingsPath: [] },
-    ]);
+    const entry = {
+      provider: r.route,
+      displayName: r.displayName,
+      settingsNs: name,
+      settingsPath: [] as string[],
+    };
+    return {
+      route: r.route,
+      region: r.region,
+      // These are live from the moment they are created, which is what the
+      // switch below compares against instead of keeping a separate memo.
+      offered: true,
+      // Effect-based registration (HMR-safe): disposed automatically on unload.
+      adapter: ctx.llm.registerAdapter([r.route], adapter),
+      // Makes WorkBuddy appear as a configurable provider in dsh's Models page —
+      // the dsh equivalent of "writing the model list into config".
+      directory: ctx.llm.registerConfigurableProviders([entry]),
+      entry,
+    };
+  });
+
+  let disposed = false;
+
+  /**
+   * Offer or withdraw each model group, per region.
+   *
+   * Per route rather than one global switch, because the two clusters are two
+   * independent groups in dsh's model picker: a user may want the CN models
+   * without a second provider cluttering the list, or the reverse.
+   *
+   * Idempotent, and idempotent by comparing against the handles themselves:
+   * `service.onChange` fires for every settings write and every quota refresh,
+   * and `replace` must not run for each of those.
+   */
+  function syncModelGroup(byRegion: { cn: boolean; intl: boolean }): void {
+    if (disposed) return;
+    for (const handle of routeHandles) {
+      const wanted = byRegion[handle.region] !== false;
+      if (handle.offered === wanted) continue;
+      handle.offered = wanted;
+      // Both handles are emptied together so dsh never shows a configurable
+      // provider whose adapter cannot serve it (or the reverse).
+      handle.adapter.replace(wanted ? [handle.route] : []);
+      handle.directory.replace(wanted ? [handle.entry] : []);
+      console.error(
+        `[workbuddy] "${handle.route}" ${wanted ? "offered" : "withdrawn"} — routes=${ctx.llm
+          .listProviders()
+          .map((p) => p.id)
+          .join(",")}`
+      );
+    }
+  }
+
+  function syncModelGroupFromSettings(): void {
+    void settings
+      .get()
+      .then((s) => syncModelGroup(s.enabledByRegion))
+      .catch(() => {});
   }
 
   // Let the Models settings page fetch and show the WorkBuddy catalog.
   ctx.llm.registerModelDiscovery(name, (request) => discoverWorkbuddyModels(service, request));
 
-  // Debug: confirm registration reached the live LLM directory (visible in the
-  // server log; harmless in production).
-  console.error(
-    `[workbuddy] routes=${ctx.llm
-      .listProviders()
-      .map((p) => p.id)
-      .join(",")} configurable=${ctx.llm.listConfigurableProviders().map((p) => p.provider).join(",")}`
-  );
+  // Apply the stored value, and follow it live: the management page's Models
+  // tab writes the same setting through the RPC layer.
+  syncModelGroupFromSettings();
+  service.onChange(syncModelGroupFromSettings);
 
   // Serve the core Vue management UI at /workbuddy/ and proxy its RPC at
   // /workbuddy/api/*. The dsh settings panel embeds it as a settings.section.
@@ -127,6 +187,11 @@ export function apply(ctx: Context, config: Config): void {
 
   const ctxAny = ctx as unknown as { on?: (e: string, cb: () => void) => void };
   ctxAny.on?.("dispose", () => {
+    // Before anything else: a settings read still in flight would otherwise
+    // call `replace` on a registration Cordis has already released, which
+    // throws `REGISTRATION_DISPOSED`. (The sync path already checks `disposed`;
+    // this is what sets it.)
+    disposed = true;
     const dispose = (service as unknown as { dispose?: () => void | Promise<void> }).dispose;
     if (dispose) void dispose.call(service);
   });

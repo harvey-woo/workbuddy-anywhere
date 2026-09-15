@@ -217,6 +217,9 @@ function configScript(langTag?: string): string {
     (locale ? `,locale:"${jsLit(locale)}"` : "") +
     `,version:"${jsLit(pluginVersion())}"` +
     `,hostVersion:"${jsLit(dshVersion())}"` +
+    // The plugin withdraws its LLM routes when the group is switched off, so
+    // the Models page's control is real here.
+    `,canToggleModelGroup:true` +
     `,display:{title:false,subtitle:false}};` +
     `var s=document.documentElement.style;${CONFIG_SETPROPS}</script>`
   );

@@ -29,12 +29,10 @@ import {
   stateError,
 } from "../lib/store";
 import { compact, levelColor, num, pct, percentOf, shortDate } from "../lib/format";
-import { runtimeConfig } from "../lib/config";
 import { navigate } from "../lib/router";
 import { useI18n } from "../lib/i18n";
 
 const { t } = useI18n();
-const cfg = runtimeConfig();
 const copied = ref("");
 const notice = ref("");
 /** Already claimed today — the per-account button disables on this. */
@@ -51,7 +49,6 @@ const expanded = ref<Record<string, boolean>>({});
  */
 const accounts = computed(() => accountsIn(region.value));
 const hasAccounts = computed(() => accounts.value.length > 0);
-const marker = computed(() => state.value?.activeKey ?? "<account-key>");
 /**
  * Auto-select: requests are allocated across accounts (expiry-first, sticky
  * per session). The manual selection REMAINS SHOWN (the SELECTED badge is
@@ -60,18 +57,6 @@ const marker = computed(() => state.value?.activeKey ?? "<account-key>");
  */
 const autoOverride = ref<boolean | null>(null);
 const autoOn = computed(() => autoOverride.value ?? settings.value?.autoSelectAccount ?? false);
-
-/**
- * The URL a client should be pointed at. `baseUrl` is "" for the http
- * transport when the UI is served by the API itself — "same origin" is useless
- * as something to copy into another program, so use the real origin. INTL
- * users get `/intl/v1` so requests hit the international gateway.
- */
-const baseUrl = computed(() => {
-  const origin = cfg.baseUrl || window.location.origin;
-  const prefix = region.value === "intl" ? "/intl" : "";
-  return `${origin.replace(/\/$/, "")}${prefix}/v1`;
-});
 
 /** Across THIS region's accounts — the headline number for that cluster. */
 const totals = computed(() => {
@@ -261,8 +246,8 @@ onMounted(() => {
     </div>
 
     <!-- Auto account selection. Lives here, not in Settings: it changes what
-         THIS list means (manual switching disabled, AUTO badge on the account
-         requests will use, status bar/tray show the region total). -->
+         THIS list means — manual switching is disabled while it is on, and the
+         status bar / tray report the region total instead of one account. -->
     <div class="wb-card mb-4 p-4">
       <ToggleSwitch
         :model-value="autoOn"
@@ -319,8 +304,6 @@ onMounted(() => {
           <span class="text-[13.5px] font-medium">{{ a.label }}</span>
           <span v-if="a.active" class="rounded px-1.5 py-0.5 text-[10px] font-semibold"
             :style="{ background: 'var(--wb-ok)', color: '#08130c' }">{{ t('accounts.selected') }}</span>
-          <span v-if="a.auto" class="rounded px-1.5 py-0.5 text-[10px] font-semibold"
-            :style="{ background: 'var(--wb-accent-soft)', color: 'var(--wb-accent)' }">{{ t('accounts.auto') }}</span>
           <span v-if="a.expired" class="rounded px-1.5 py-0.5 text-[10px] font-semibold"
             :style="{ background: 'var(--wb-warn)', color: '#1a1405' }">{{ t('accounts.tokenExpired') }}</span>
           <span class="ml-auto text-[11px]" :style="{ color: 'var(--wb-muted)' }">
@@ -361,7 +344,22 @@ onMounted(() => {
           <span v-if="checkinEnabledFor(a)" :style="{ color: a.checkin?.state === 'claimed' ? 'var(--wb-ok)' : undefined }">
             {{ checkinLabel(a) }}
           </span>
-          <span> · {{ t('accounts.keyLabel') }} <code class="wb-mono">{{ a.key }}</code></span>
+          <span>
+            · {{ t('accounts.keyLabel') }} <code class="wb-mono">{{ a.key }}</code>
+            <button
+              class="wb-icon-btn ml-1"
+              :title="copied === a.key ? t('accounts.copied') : t('accounts.copyKey')"
+              :aria-label="t('accounts.copyKey')"
+              @click="copy(a.key, a.key)"
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <rect x="5.2" y="5.2" width="8.6" height="8.6" rx="2"
+                  fill="none" stroke="currentColor" stroke-width="1.3" />
+                <path d="M10.8 3.6V3.2a1.2 1.2 0 0 0-1.2-1.2H3.2A1.2 1.2 0 0 0 2 3.2v6.4a1.2 1.2 0 0 0 1.2 1.2h.4"
+                  fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+              </svg>
+            </button>
+          </span>
         </div>
 
         <p v-if="a.refreshError" class="mb-2 text-[11px]"
@@ -374,10 +372,10 @@ onMounted(() => {
           <button
             class="wb-btn"
             :disabled="busy || a.active || autoOn"
-            :title="autoOn ? 'Auto-select is on — requests are allocated automatically' : undefined"
+            :title="autoOn ? t('accounts.autoSelect') : undefined"
             @click="switchTo(a.key)"
           >
-            {{ a.active ? t('accounts.selected') : autoOn ? t('accounts.auto') : t('accounts.switchTo') }}
+            {{ a.active ? t('accounts.selected') : t('accounts.switchTo') }}
           </button>
           <button
             v-if="checkinEnabledFor(a)"
@@ -400,11 +398,8 @@ onMounted(() => {
           >
             {{ expanded[a.key] ? "Hide packages" : t('accounts.packages', { count: String(packagesOf(a).length) }) }}
           </button>
-          <button class="wb-btn" @click="copy(a.key, a.key)">
-            {{ copied === a.key ? t('accounts.copied') : t('accounts.copiedKey') }}
-          </button>
           <button class="wb-btn wb-btn-danger" :disabled="busy" @click="remove(a.key, a.label)">
-            {{ t('accounts.logout') }}
+            {{ t('accounts.delete') }}
           </button>
         </div>
 
@@ -468,36 +463,5 @@ onMounted(() => {
         {{ state.catalogError }}
       </p>
     </div>
-    <p v-else-if="state" class="mt-4 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-      {{ t('accounts.catalogSummary', {
-        offered: String(state.models.length),
-        withheld: String(state.excludedModels.length),
-      }) }}
-    </p>
-
-    <!-- Setup help, deliberately last -->
-    <details v-if="hasAccounts" class="mt-5">
-      <summary class="cursor-pointer text-[12px]" :style="{ color: 'var(--wb-muted)' }">
-        {{ t('accounts.clientHelp') }}
-      </summary>
-      <div class="wb-card mt-2 p-4">
-        <p class="mb-3 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-          Point an OpenAI-compatible client at
-          <code class="wb-mono">{{ baseUrl }}</code> and paste an account's key
-          into its API key field — the key goes in the standard
-          <code class="wb-mono">Authorization: Bearer</code> slot, so no custom
-          configuration is needed. Leave it empty to use the selected account.
-          An unknown key is rejected rather than silently charged to another
-          account.
-        </p>
-        <div class="flex flex-wrap items-center gap-2">
-          <code class="wb-mono rounded px-2 py-1 text-[11.5px]"
-            :style="{ background: 'var(--wb-panel)' }">{{ marker }}</code>
-          <button class="wb-btn" @click="copy(marker, 'key')">
-            {{ copied === "key" ? "Copied" : "Copy key" }}
-          </button>
-        </div>
-      </div>
-    </details>
   </section>
 </template>

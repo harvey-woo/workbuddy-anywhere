@@ -1,6 +1,6 @@
 {
   "name": "wbaw",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "private": true,
   "description": "WorkBuddy Anywhere — one core, three hosts (VS Code, desktop, HTTP API). All workspace packages ship in lock-step at the version pinned here.",
   "license": "MIT",

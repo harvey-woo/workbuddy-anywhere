@@ -192,7 +192,20 @@ export async function fetchCheckinStatus(auth: WorkbuddyAuth): Promise<CheckinRe
     if (obj.code === 10001) return { state: "claimed" };
     if (obj.code !== 0) return { state: "unknown", error: `code=${obj.code}` };
     const data = obj.data as Record<string, unknown> | undefined;
-    if (data?.today_checked_in === true) return { state: "claimed" };
+    // `today_checked_in` describes the seasonal check-in ACTIVITY, not the
+    // daily bonus: with no activity running the gateway returns the whole block
+    // zeroed (`active:false`, `activity_name:""`, `start_time`/`end_time`:""`)
+    // — this flag included. Reading it as the daily verdict therefore reported
+    // "unclaimed" for accounts that had already claimed. Verified 2026-09-15:
+    // `daily-checkin` answered 10001 "今天已签到，请明天再来" for three accounts
+    // this endpoint called `today_checked_in:false`.
+    //
+    // There is NO read-only source for the daily bonus — no other endpoint
+    // exists, and the billing payload carries no check-in field. So when no
+    // activity is running the honest answer is "cannot tell", and the only way
+    // to learn the truth is `doCheckin` (idempotent, see `ensureCheckin`).
+    if (data?.active !== true) return { state: "unknown" };
+    if (data.today_checked_in === true) return { state: "claimed" };
     return { state: "unclaimed" };
   } catch (e: unknown) {
     return { state: "unknown", error: e instanceof Error ? e.message : String(e) };
@@ -228,15 +241,21 @@ async function doCheckin(auth: WorkbuddyAuth): Promise<CheckinResult> {
 }
 
 /**
- * Ensure daily check-in: fetch status, claim if unclaimed.
+ * Ensure daily check-in: claim unless the gateway CONFIRMS it is already done.
  * Returns the check-in result (useful for tooltip display).
+ *
+ * Anything short of "claimed" falls through to the claim endpoint, including an
+ * inconclusive status read — which is the normal case (see
+ * `fetchCheckinStatus`). Claiming is idempotent, and its 10001 answer
+ * ("今天已签到，请明天再来") is the only authoritative statement that today's
+ * bonus is already claimed. Treating "unknown" as "nothing to do" would mean
+ * never claiming at all.
  */
 export async function ensureCheckin(auth: WorkbuddyAuth): Promise<CheckinResult> {
   try {
     const status = await fetchCheckinStatus(auth);
     if (status.state === "claimed") return status;
-    if (status.state === "unclaimed") return await doCheckin(auth);
-    return status;
+    return await doCheckin(auth);
   } catch {
     return { state: "unknown" };
   }

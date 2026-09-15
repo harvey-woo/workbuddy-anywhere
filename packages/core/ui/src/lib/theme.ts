@@ -16,7 +16,7 @@
  */
 
 import { ref } from "vue";
-import { runtimeConfig } from "./config";
+import { isVsCodeWebview, runtimeConfig } from "./config";
 
 export type Theme = "dark" | "light";
 
@@ -65,6 +65,10 @@ function readVsCodeTheme(): Theme | null {
 
 /** Resolve the theme from every signal we have, in priority order. */
 function resolveTheme(): Theme {
+  // 0. An explicit choice from Settings wins over the ambient signals below.
+  //    Without this, a user who picks "light" on a dark-themed OS watches the
+  //    media-query listener flip it back the moment the desktop theme changes.
+  if (override) return override;
   // 1. An explicit host declaration wins — the host can see things we cannot.
   const injected = runtimeConfig().theme;
   if (injected === "light" || injected === "dark") return injected;
@@ -107,17 +111,31 @@ export function initTheme(): void {
   window.matchMedia?.("(prefers-color-scheme: light)").addEventListener?.("change", refreshTheme);
 }
 
+/** A theme chosen in Settings. Outranks the ambient signals until a host pushes. */
+let override: Theme | null = null;
+
 /** A host pushing a theme it decided on (dsh's frame, the desktop tray). */
 export function applyTheme(next: Theme): void {
+  // The host outranks a stored preference — otherwise a user's old pick here
+  // would silently beat the host they are currently embedded in.
+  override = null;
   publish(next);
 }
 
-/** Theme is host-owned now; there is no picker left to save from. */
-export async function setTheme(next: Theme): Promise<void> {
+/** Apply a choice made in Settings. */
+export function setTheme(next: Theme): void {
+  override = next;
   publish(next);
 }
 
-/** Theme is host-owned now, so every surface is host-controlled. */
+/**
+ * Whether a host has already decided the theme, making a picker pointless.
+ *
+ * True when the host injects an explicit value (dsh paints our frame) or when
+ * we are in the VS Code webview, whose workbench rewrites the theme attributes
+ * on every theme change — a stored preference there could not win anyway.
+ */
 export function isHostControlledTheme(): boolean {
-  return true;
+  const injected = runtimeConfig().theme;
+  return injected === "light" || injected === "dark" || isVsCodeWebview();
 }

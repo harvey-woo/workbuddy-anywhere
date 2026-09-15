@@ -53,6 +53,15 @@ export class VsCodeSettingsStore implements SettingsStore {
     // workspace — so the management page and the status bars all read the
     // same value. Default CN because that is what existing installs use.
     const region = this.cfg.get<Region>("region", DEFAULT_REGION);
+    // `enabledByRegion` is an object setting with NO schema default, so an
+    // unset value comes back as undefined — that absence is the only signal
+    // that this install predates the per-region split, and therefore the cue to
+    // seed from the legacy global `enabled`. Once the new key has been written
+    // its keys win and the old one is ignored, exactly as in the file store.
+    const perRegionEnabled = this.cfg.get<Partial<Settings["enabledByRegion"]>>(
+      "enabledByRegion"
+    );
+    const legacyEnabled = this.cfg.get<boolean>("enabled", true);
     // Spread DEFAULT_SETTINGS FIRST: this used to be a hand-maintained mirror
     // of the interface, which silently ignored every field added later (the
     // Models page's allow/deny lists would have been written and then read back
@@ -73,7 +82,10 @@ export class VsCodeSettingsStore implements SettingsStore {
       ),
       modelAllowlist: this.cfg.get<string[]>("modelAllowlist", DEFAULT_SETTINGS.modelAllowlist),
       modelBlocklist: this.cfg.get<string[]>("modelBlocklist", DEFAULT_SETTINGS.modelBlocklist),
-      enabled: this.cfg.get<boolean>("enabled", DEFAULT_SETTINGS.enabled),
+      enabledByRegion: {
+        cn: perRegionEnabled?.cn ?? legacyEnabled,
+        intl: perRegionEnabled?.intl ?? legacyEnabled,
+      },
       autoSelectAccount: this.cfg.get<boolean>(
         "autoSelectAccount",
         DEFAULT_SETTINGS.autoSelectAccount
@@ -83,7 +95,22 @@ export class VsCodeSettingsStore implements SettingsStore {
   }
 
   async update(patch: Partial<Settings>): Promise<Settings> {
-    for (const [key, value] of Object.entries(patch)) {
+    // The two per-region settings are nested maps, and `cfg.update` replaces an
+    // object setting wholesale — so a patch carrying ONE region would drop the
+    // other, and the read-side fallback would restore it to its default rather
+    // than to its previous value. Merge them per key first. The file store has
+    // the same hazard and guards it the same way.
+    const current = await this.get();
+    const mergePerRegion = (key: "checkinByRegion" | "enabledByRegion") => {
+      const patched = patch[key];
+      return patched ? { ...current[key], ...patched } : undefined;
+    };
+    const merged: Partial<Settings> = {
+      ...patch,
+      checkinByRegion: mergePerRegion("checkinByRegion"),
+      enabledByRegion: mergePerRegion("enabledByRegion"),
+    };
+    for (const [key, value] of Object.entries(merged)) {
       if (value === undefined) continue;
       await this.cfg.update(key, value, vscode.ConfigurationTarget.Global);
     }

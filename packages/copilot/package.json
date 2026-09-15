@@ -2,7 +2,7 @@
   "name": "workbuddy-anywhere-for-copilot",
   "displayName": "WorkBuddy Anywhere for Copilot",
   "description": "WorkBuddy Anywhere for Copilot: use WorkBuddy models in VS Code Chat, with hosted multi-account support and a management page shared with the desktop app",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "publisher": "codebuddy-chat",
   "icon": "icon.png",
   "engines": {
@@ -35,56 +35,29 @@
       {
         "vendor": "codebuddy-intl",
         "displayName": "CodeBuddy Global",
-        "managementCommand": "codebuddy-intl.manageProvider"
+        "managementCommand": "codebuddy.manageProvider"
       }
     ],
     "commands": [
       {
+        "command": "codebuddy.openPanel",
+        "title": "WorkBuddy Anywhere: Open Panel",
+        "description": "Open the WorkBuddy Anywhere page: accounts, quota, packages, check-in, models and settings."
+      },
+      {
         "command": "codebuddy.manageProvider",
-        "title": "WorkBuddy Anywhere: Manage Account",
-        "description": "Accounts, quota, packages, check-in, models and settings. Also what the status bar opens."
-      },
-      {
-        "command": "codebuddy-intl.manageProvider",
-        "title": "WorkBuddy Anywhere: Manage Account (Global)",
-        "description": "The same management page, opened on the international cluster."
-      },
-      {
-        "command": "codebuddy.menu",
-        "title": "WorkBuddy Anywhere: Menu",
-        "description": "Alias for the management page, kept so existing keybindings keep working."
-      },
-      {
-        "command": "codebuddy.login",
-        "title": "WorkBuddy Anywhere: Add Account (Scan QR)"
-      },
-      {
-        "command": "codebuddy.logout",
-        "title": "WorkBuddy Anywhere: Sign Out",
-        "description": "Opens the management page, where every account is listed with its quota."
-      },
-      {
-        "command": "codebuddy.showUsage",
-        "title": "WorkBuddy Anywhere: Show Usage & Packages"
-      },
-      {
-        "command": "codebuddy.settings",
-        "title": "WorkBuddy Anywhere: Settings"
-      },
-      {
-        "command": "codebuddy.refreshModels",
-        "title": "WorkBuddy Anywhere: Refresh Model List"
-      },
-      {
-        "command": "codebuddy.toggleProvider",
-        "title": "WorkBuddy Anywhere: Enable/Disable Model Group"
-      },
-      {
-        "command": "codebuddy.selectVisionFallback",
-        "title": "WorkBuddy Anywhere: Select Vision Fallback Model",
-        "description": "Opens the management page's Settings tab, where every chat model registered in VS Code's LM namespace is selectable."
+        "title": "WorkBuddy Anywhere: Manage Accounts & Models",
+        "description": "Accounts, quota, packages, check-in, models and settings. Also what the status bar and both model-group gears open."
       }
     ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "codebuddy.manageProvider",
+          "when": "false"
+        }
+      ]
+    },
     "configuration": {
       "title": "WorkBuddy Anywhere",
       "properties": {
@@ -144,10 +117,28 @@
           "default": [],
           "description": "Model ids forced OUT of the model list (blacklist). Applied last, so it also beats custom models and the whitelist. Edited by switching a model off in the management page's Models tab."
         },
+        "codebuddy.enabledByRegion": {
+          "type": "object",
+          "properties": {
+            "cn": {
+              "type": "boolean",
+              "default": true,
+              "description": "Offer the CodeBuddy (CN) model group to VS Code's model picker"
+            },
+            "intl": {
+              "type": "boolean",
+              "default": true,
+              "description": "Offer the CodeBuddy Global model group to VS Code's model picker"
+            }
+          },
+          "additionalProperties": false,
+          "description": "Which model groups are offered to VS Code's model picker, PER REGION. The two clusters are independent groups in the picker, so they are switched separately — the management page's Models tab edits the group for the region it is showing. No default here on purpose: its absence is how the extension knows to seed from the legacy `codebuddy.enabled` on upgrade."
+        },
         "codebuddy.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Offer the CodeBuddy model group to VS Code's model picker"
+          "deprecationMessage": "Superseded by `codebuddy.enabledByRegion`, which switches the CN and Global model groups separately. This value is still read once, as the starting value for both regions, when `enabledByRegion` has never been set.",
+          "description": "Offer the CodeBuddy model group to VS Code's model picker (legacy, global)"
         },
         "codebuddy.autoSelectAccount": {
           "type": "boolean",

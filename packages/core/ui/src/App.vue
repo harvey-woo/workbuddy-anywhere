@@ -21,6 +21,8 @@ import LoginView from "./views/LoginView.vue";
 import ModelsView from "./views/ModelsView.vue";
 import SettingsView from "./views/SettingsView.vue";
 import { useI18n } from "./lib/i18n";
+import { chooseLocale, isHostControlledLocale } from "./lib/i18n";
+import { isHostControlledTheme, setTheme } from "./lib/theme";
 
 const { t } = useI18n();
 
@@ -103,16 +105,37 @@ function applyCssVars(vars: string | undefined): void {
 }
 applyCssVars(cfg.cssVars);
 
+/**
+ * Apply the stored appearance — but only on hosts that do not own it.
+ *
+ * `settings.theme` / `settings.locale` are the source for the desktop app and
+ * the standalone server, and both already carry them. Before this the
+ * management window ignored the settings entirely, so changing the theme from
+ * the desktop tray menu changed nothing visible — the tray's own checkmark
+ * moved and the window stayed put.
+ *
+ * VS Code and dsh are skipped on purpose: their signals outrank a stored
+ * preference and they keep changing on their own (see `isHostControlledTheme`
+ * and `isHostControlledLocale`). Taking over there would mean fighting the host
+ * every time the user switched a VS Code theme.
+ */
+function applyStoredAppearance(): void {
+  const s = state.value?.settings;
+  if (!s) return;
+  if (!isHostControlledTheme() && (s.theme === "dark" || s.theme === "light")) {
+    setTheme(s.theme);
+  }
+  if (!isHostControlledLocale() && (s.locale === "en" || s.locale === "zh")) {
+    chooseLocale(s.locale);
+  }
+}
+
 onMounted(async () => {
   await refreshState();
-
-  // Theme and locale are NOT read from settings any more: both come from the
-  // host (VS Code's body attributes, dsh's injected config, the OS) and are
-  // kept current by main.ts. Persisting them here would reintroduce the second
-  // source of truth the pickers used to be.
+  applyStoredAppearance();
 
   const onStateChanged = (): void => {
-    void refreshState();
+    void refreshState().then(applyStoredAppearance);
   };
   window.addEventListener("workbuddy:stateChanged", onStateChanged);
 
@@ -158,13 +181,26 @@ async function checkinAllRegions(): Promise<void> {
 }
 
 /**
- * How many accounts across BOTH clusters still have today's bonus unclaimed.
- * Drives the check-in button's label and disabled state. "unknown" states do
- * not count — an account we could not reach is not a confirmed pending claim.
+ * How many accounts across BOTH clusters still have today's bonus to claim.
+ * Drives the check-in button's label and disabled state.
+ *
+ * Everything NOT confirmed claimed counts, for accounts whose cluster has the
+ * feature at all. The gateway has no read-only daily-bonus endpoint (see core's
+ * `fetchCheckinStatus`), so "unknown" means "not confirmed claimed today" —
+ * which is exactly what a host that does not claim at startup leaves behind,
+ * and what a failed claim leaves behind. Counting only "unclaimed" disabled
+ * this button in both of those cases, i.e. precisely when it was needed.
  */
-const checkinPending = computed(
-  () => (state.value?.accounts ?? []).filter((a) => a.checkin?.state === "unclaimed").length
-);
+const checkinPending = computed(() => {
+  const flags = state.value?.settings?.checkinByRegion;
+  return (state.value?.accounts ?? []).filter((a) => {
+    // A cluster without the feature has no bonus to claim, so its accounts
+    // never count: they are "unknown" by construction, not by failure. Same
+    // reading as `checkinEnabledFor` in AccountsView.
+    const enabled = flags ? (a.region === "intl" ? !!flags.intl : !!flags.cn) : true;
+    return enabled && a.checkin?.state !== "claimed";
+  }).length;
+});
 
 /**
  * Whether ANY cluster has the check-in feature at all. The flags live in

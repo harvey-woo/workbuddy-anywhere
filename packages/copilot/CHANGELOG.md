@@ -1,5 +1,35 @@
 # workbuddy-anywhere-for-copilot
 
+## 0.8.2
+
+### Patch Changes
+
+- Fix check-in status always showing "not claimed yet" after every refresh
+  
+  The status read on `/billing/meter/checkin-status` reports the seasonal
+  check-in ACTIVITY, not the daily bonus, so with no activity running the
+  gateway returns the whole block zeroed (`active:false`,
+  `activity_name:""`, `start_time`/`end_time`:""`) — `today_checked_in`
+  included. Reading that flag as the daily verdict therefore rendered
+  "not claimed yet" for accounts that had already claimed, and every
+  `refreshAllUsage()` (startup warm-up, Refresh usage, tray, region-follow
+  refresh after a chat, midnight rollover) re-read it and erased the
+  correct verdict a claim had just established.
+  
+  - `fetchCheckinStatus` now reports `unknown` when no activity is running
+    instead of inventing `unclaimed`.
+  - `ensureCheckin` falls through to the (idempotent) claim endpoint
+    whenever the status read is not a confirmed "claimed", so an
+    inconclusive read can no longer silently skip the daily claim.
+  - `refreshAllUsage` keeps a verdict the claim recorded today, and stops
+    preserving one from a previous day — so a new day always re-offers
+    the bonus.
+  - The sidebar "Check in all" button now counts accounts whose cluster
+    has check-in enabled and that are not confirmed claimed, so it stays
+    actionable on hosts that do not auto-claim and after a failed claim.
+- Updated dependencies
+  - @wbaw/core@0.8.2
+
 ## 0.8.1
 
 ### Patch Changes

@@ -57,8 +57,33 @@ export interface Settings {
    * so it also wins over `customModels` and `modelAllowlist`.
    */
   modelBlocklist: string[];
-  /** Whether the WorkBuddy model group is offered to the host's model picker. */
-  enabled: boolean;
+  /**
+   * Whether each region's model group is REGISTERED with a host's model
+   * picker, per region.
+   *
+   * Per region because the two clusters are two INDEPENDENT groups in every
+   * picker (`CodeBuddy` and `CodeBuddy Global` are separate vendors in VS Code,
+   * separate routes in dsh). A single global flag could not express the thing
+   * users actually ask for — offer the CN models without a second cluster
+   * cluttering the picker, or the reverse — and it made the Models page's
+   * switch look stale, because flipping it in one region also flipped the
+   * other.
+   *
+   * Hosts that own a picker act on this literally: the VS Code extension
+   * unregisters that vendor's `LanguageModelChatProvider` and the dsh plugin
+   * empties that route, so the group disappears from the picker instead of
+   * being merely hidden by a flag (see `packages/copilot` / `packages/dsh`).
+   *
+   * It deliberately does NOT gate core's own chat path. The HTTP surface is a
+   * client, not a host with a picker, and a settings flag that silently 409s
+   * somebody's curl script while no UI exposes it is a trap — that is what an
+   * earlier version of this field did, together with an `autoSelectAccount`
+   * exemption that made it look inert in half the configurations.
+   *
+   * Supersedes a single global `enabled: boolean`, which hosts and settings
+   * files may still carry; see the migration in `FileSettingsStore.get`.
+   */
+  enabledByRegion: { cn: boolean; intl: boolean };
   /**
    * Allocate accounts automatically per request (quota- and expiry-aware,
    * sticky per session). Off = requests follow the manually selected account,
@@ -101,7 +126,7 @@ export const DEFAULT_SETTINGS: Settings = {
   customModels: [],
   modelAllowlist: [],
   modelBlocklist: [],
-  enabled: true,
+  enabledByRegion: { cn: true, intl: true },
   autoSelectAccount: false,
   checkinByRegion: { cn: true, intl: false },
   region: DEFAULT_REGION,
@@ -126,22 +151,40 @@ export class FileSettingsStore implements SettingsStore {
 
   async get(): Promise<Settings> {
     try {
-      const raw = JSON.parse(
-        await fs.readFile(this.file, "utf-8")
-      ) as Partial<Settings>;
+      const raw = JSON.parse(await fs.readFile(this.file, "utf-8")) as Partial<Settings> & {
+        /**
+         * The pre-`enabledByRegion` global flag. Read, never written; kept in
+         * the type so the migration below can see it without a cast, and left
+         * in the file on write so an older build sharing this directory still
+         * finds the value it understands.
+         */
+        enabled?: boolean;
+      };
       // Self-heal: if a previous run persisted an invalid region (e.g. a
       // label string slipped into the patch, or a human edited the file
       // by hand), `...DEFAULT_SETTINGS, ...raw` would let the bad value
       // overwrite the default and strand the UI with no region selected.
       // Validate before merging.
-      const rawRegion = (raw as Partial<Settings>).region;
+      const rawRegion = raw.region;
       // checkinByRegion is a nested object: a hand-edited or older file may
       // miss one side, so merge it over the defaults per key instead of
       // letting a partial object wipe a flag.
-      const rawCheckin = (raw as Partial<Settings>).checkinByRegion;
+      const rawCheckin = raw.checkinByRegion;
+      // `enabledByRegion` replaced one global `enabled`. A file written before
+      // the split carries only the global one, and honouring it as the seed for
+      // BOTH regions is the difference between "the user's choice survives the
+      // upgrade" and "a group they deliberately hid comes back on". Once
+      // `enabledByRegion` exists its keys win, so the seed is applied once.
+      const rawEnabled = raw.enabledByRegion;
+      const legacyEnabled = typeof raw.enabled === "boolean" ? raw.enabled : undefined;
+      const enabledByRegion = {
+        cn: rawEnabled?.cn ?? legacyEnabled ?? DEFAULT_SETTINGS.enabledByRegion.cn,
+        intl: rawEnabled?.intl ?? legacyEnabled ?? DEFAULT_SETTINGS.enabledByRegion.intl,
+      };
       const sanitized: Partial<Settings> = {
         ...raw,
         region: rawRegion === "cn" || rawRegion === "intl" ? rawRegion : DEFAULT_REGION,
+        enabledByRegion,
         ...(rawCheckin
           ? {
               checkinByRegion: {
@@ -163,7 +206,18 @@ export class FileSettingsStore implements SettingsStore {
     // stale snapshot, but without the lock two processes can still both read,
     // both merge, and the second write drops the first's keys.
     return withFileLock(this.file, async () => {
-      const next: Settings = { ...(await this.get()), ...patch };
+      const before = await this.get();
+      const next: Settings = { ...before, ...patch };
+      // The two per-region settings are nested maps. A shallow spread would let
+      // a patch carrying ONE region silently wipe the other — `{cn: false}`
+      // would drop `intl` entirely, and the read-side sanitizer would then
+      // restore it to its DEFAULT rather than to its previous value, which is
+      // data loss that reports as success. Merge these key by key. Everything
+      // else is a scalar or a list, where last-writer-wins is the intent.
+      for (const key of ["checkinByRegion", "enabledByRegion"] as const) {
+        const patched = patch[key];
+        if (patched) next[key] = { ...before[key], ...patched };
+      }
       await fs.mkdir(this.dir, { recursive: true });
       // Atomic: a crash (or a concurrent reader) must never see a truncated
       // file. `writeFile` in place can leave half a document behind.

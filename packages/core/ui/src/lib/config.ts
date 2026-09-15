@@ -51,6 +51,17 @@ export interface RuntimeConfig {
    * (e.g. dsh's Settings nav) can hide core's redundant chrome.
    */
   display?: { title?: boolean; subtitle?: boolean };
+  /**
+   * Set by a host that can take the model group in and out of its OWN model
+   * picker — the VS Code extension unregisters its
+   * `LanguageModelChatProvider`s, the dsh plugin withdraws its LLM routes.
+   *
+   * Absent means the control is not offered at all, rather than offered and
+   * inert. This page also runs in hosts where flipping the flag changes nothing
+   * observable (the desktop app, the standalone server), and a switch that does
+   * nothing is worse than no switch — that was the state this flag replaced.
+   */
+  canToggleModelGroup?: boolean;
 }
 
 declare global {
@@ -59,6 +70,26 @@ declare global {
     acquireVsCodeApi?: () => unknown;
     workbuddy?: { invoke(method: string, params?: unknown): Promise<unknown> };
   }
+}
+
+/**
+ * Whether the page is running inside the VS Code webview.
+ *
+ * Read from the DOM rather than from `transport`: the workbench marks `<body>`
+ * with `vscode-*` classes and a `data-vscode-theme-kind` attribute, which is
+ * exactly what theme resolution keys off. Nothing else paints those, so this
+ * cannot mistake another host with the same transport value for VS Code.
+ */
+export function isVsCodeWebview(): boolean {
+  const body = document.body;
+  if (!body) return false;
+  return (
+    !!body.dataset?.vscodeThemeKind ||
+    body.classList.contains("vscode-dark") ||
+    body.classList.contains("vscode-light") ||
+    body.classList.contains("vscode-high-contrast") ||
+    body.classList.contains("vscode-high-contrast-light")
+  );
 }
 
 export function runtimeConfig(): RuntimeConfig {
@@ -73,6 +104,7 @@ export function runtimeConfig(): RuntimeConfig {
       theme: injected.theme,
       locale: injected.locale,
       cssVars: injected.cssVars,
+      canToggleModelGroup: injected.canToggleModelGroup === true,
       // Default to TRUE so existing standalone / VS Code webview hosts (which
       // don't pass `display`) keep their title and subtitle. Hosts that embed
       // core into a frame with their own title (e.g. dsh's Settings nav) opt

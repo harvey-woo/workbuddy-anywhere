@@ -287,6 +287,14 @@ export class WorkbuddyService {
   /** Billing refreshes already running — so one stale snapshot kicks off one fetch. */
   private readonly billingRefreshInFlight = new Set<string>();
   private readonly checkins = new Map<string, CheckinResult>();
+  /**
+   * Local day (`YYYY-MM-DD`, see `localDayKey`) each verdict above describes.
+   *
+   * The bonus resets at local midnight, and the gateway has NO read-only
+   * endpoint that can re-confirm it (see `fetchCheckinStatus`), so the claim is
+   * the record — and the day it was made on is part of it.
+   */
+  private readonly checkinDay = new Map<string, string>();
   private readonly refreshErrors = new Map<string, string>();
   /** Billing failures, keyed by account — the reason quota is blank. */
   private readonly billingErrors = new Map<string, string>();
@@ -502,6 +510,23 @@ export class WorkbuddyService {
     return auth?.region ?? DEFAULT_REGION;
   }
 
+  /** Record a verdict, remembering which day it describes. */
+  private recordCheckin(key: string, result: CheckinResult): void {
+    this.checkins.set(key, result);
+    this.checkinDay.set(key, localDayKey());
+  }
+
+  /** Forget an account's verdict — its key changed, or it is gone. */
+  private forgetCheckin(key: string): void {
+    this.checkins.delete(key);
+    this.checkinDay.delete(key);
+  }
+
+  /** Whether the stored verdict was obtained today, so still describes today. */
+  private checkinRecordedToday(key: string): boolean {
+    return this.checkinDay.get(key) === localDayKey();
+  }
+
   /**
    * Whether the daily check-in should run for THIS account's cluster. The
    * INTL gateway has no check-in endpoint, so it ships disabled; both flags
@@ -683,7 +708,7 @@ export class WorkbuddyService {
   async removeAccount(key: string): Promise<ServiceState> {
     await this.opts.auth.remove(key);
     this.billings.delete(key);
-    this.checkins.delete(key);
+    this.forgetCheckin(key);
     this.refreshErrors.delete(key);
     this.billingErrors.delete(key);
     if ((await this.opts.auth.list()).length === 0) await this.loadCatalog(DEFAULT_REGION);
@@ -854,7 +879,7 @@ export class WorkbuddyService {
     if (await this.checkinEnabledFor(auth)) {
       try {
         checkin = await ensureCheckin(auth);
-        this.checkins.set(key, checkin);
+        this.recordCheckin(key, checkin);
       } catch (err) {
         this.log(`check-in after login failed: ${errText(err)}`);
       }
@@ -914,7 +939,7 @@ export class WorkbuddyService {
         if (!identity.uid && !identity.nickname) continue;
         await this.opts.auth.rename(key, { ...account, ...identity });
         this.billings.delete(key);
-        this.checkins.delete(key);
+        this.forgetCheckin(key);
         this.refreshErrors.delete(key);
         this.billingErrors.delete(key);
         this.log(`identified ${key} as ${identity.nickname || identity.uid}`);
@@ -937,7 +962,7 @@ export class WorkbuddyService {
       } catch (err) {
         checkin = { state: "unknown", error: errText(err) };
       }
-      this.checkins.set(accountId, checkin);
+      this.recordCheckin(accountId, checkin);
     } else {
       // Check-in disabled for this region: "unknown" is the schema's
       // not-applicable state; consumers hide the row via checkinEnabled in
@@ -966,7 +991,16 @@ export class WorkbuddyService {
       // clusters instead of leaving a stale/erred status in the map.
       if (!(await this.checkinEnabledFor(auth))) continue;
       try {
-        this.checkins.set(key, await fetchCheckinStatus(auth));
+        const status = await fetchCheckinStatus(auth);
+        // An INCONCLUSIVE read (no check-in activity is running — see
+        // `fetchCheckinStatus`) says nothing about today's bonus, so it must not
+        // overwrite a verdict a CLAIM established today. That overwrite is what
+        // made the UI fall back to "not claimed yet" on every refresh —
+        // startup warm-up, the Refresh usage button, the tray, the region-follow
+        // refresh after a chat, and the midnight rollover — for accounts whose
+        // bonus was in fact already claimed.
+        if (status.state === "unknown" && this.checkinRecordedToday(key)) continue;
+        this.recordCheckin(key, status);
       } catch (err) {
         // Keep whatever status we already had rather than blanking the UI.
         this.log(`check-in status failed for ${accountLabel(account)}: ${errText(err)}`);
@@ -1013,7 +1047,7 @@ export class WorkbuddyService {
     // does not touch the gateway — checkinAll then counts nothing for it.
     if (!(await this.checkinEnabledFor(auth))) {
       const skipped: CheckinResult = { state: "unknown" };
-      this.checkins.set(accountId, skipped);
+      this.recordCheckin(accountId, skipped);
       this.emit();
       return skipped;
     }
@@ -1026,7 +1060,7 @@ export class WorkbuddyService {
     } catch (err) {
       result = { state: "unknown", error: errText(err) };
     }
-    this.checkins.set(accountId, result);
+    this.recordCheckin(accountId, result);
     this.emit();
     return result;
   }
@@ -1355,15 +1389,11 @@ export class WorkbuddyService {
       ? await this.ensureAuth(accountKey)
       : await this.ensureChatAuth(request);
     const settings = await this.opts.settings.get();
-    // Priority: explicit account marker > auto-select > the model-group
-    // toggle. With auto-select on, the group toggle no longer blocks chat —
-    // it keeps meaning "hide the group from the host's picker" — so API
-    // traffic keeps flowing while the picker is hidden.
-    if (!settings.enabled && !settings.autoSelectAccount) {
-      throw new Error(
-        "The WorkBuddy model group is disabled. Re-enable it in the management page to use it."
-      );
-    }
+    // NOTE: `settings.enabledByRegion` is deliberately NOT consulted here. It
+    // decides whether a group is registered with a host's model picker (the VS
+    // Code extension and the dsh plugin add/remove their providers), so a
+    // request that reaches this method has already passed that gate by
+    // existing. The HTTP surface is a client and is not gated by it.
     const catalog = this.catalogEntry(this.regionOf(auth));
     const effective = applyModelOverrides(catalog, settings);
 
@@ -1526,4 +1556,16 @@ function msUntilNextLocalMidnight(): number {
   const next = new Date(now);
   next.setHours(24, 0, 0, 0);
   return Math.max(next.getTime() - now.getTime(), 60_000) + 30_000;
+}
+
+/**
+ * The local calendar day as `YYYY-MM-DD`.
+ *
+ * The daily bonus resets at local midnight, so a check-in verdict only
+ * describes the day it was obtained on — see `refreshAllUsage`.
+ */
+function localDayKey(now = new Date()): string {
+  const month = `${now.getMonth() + 1}`.padStart(2, "0");
+  const day = `${now.getDate()}`.padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${day}`;
 }

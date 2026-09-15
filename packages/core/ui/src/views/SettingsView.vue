@@ -9,9 +9,11 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import type { ThinkingEffort } from "@core/settings";
 import type { ServerStatus } from "@core/rpc";
 import { call } from "../lib/client";
-import { refreshState, run, settings } from "../lib/store";
+import { refreshState, region, run, settings } from "../lib/store";
 import { runtimeConfig } from "../lib/config";
 import { useI18n } from "../lib/i18n";
+import { chooseLocale, isHostControlledLocale, locale } from "../lib/i18n";
+import { isHostControlledTheme, setTheme, theme } from "../lib/theme";
 import { navigate } from "../lib/router";
 
 const { t } = useI18n();
@@ -43,6 +45,34 @@ async function save(patch: Record<string, unknown>, label: string): Promise<void
   });
   if (ok !== undefined) notice.value = t("settings.saved", { label });
   window.setTimeout(() => (notice.value = ""), 2000);
+}
+
+// ── Appearance ────────────────────────────────────────────────────────
+
+/**
+ * A picker is offered only where it can actually take effect.
+ *
+ * VS Code paints its own theme and rewrites it on every change, and the dsh
+ * frame injects both values — a control there would either lose or fight the
+ * host. Everywhere else these write the same `settings.theme` / `settings.locale`
+ * the desktop tray already reads.
+ */
+const hostTheme = isHostControlledTheme();
+const hostLocale = isHostControlledLocale();
+const showAppearance = !hostTheme || !hostLocale;
+
+async function pickTheme(value: string): Promise<void> {
+  const next = value === "light" ? "light" : "dark";
+  // Apply BEFORE the round-trip: waiting for updateSettings + getState to
+  // repaint a two-colour theme makes the control feel broken.
+  setTheme(next);
+  await save({ theme: next }, t("settings.theme"));
+}
+
+async function pickLocale(value: string): Promise<void> {
+  const next = value === "zh" ? "zh" : "en";
+  chooseLocale(next);
+  await save({ locale: next }, t("settings.language"));
 }
 
 // ── API server management (desktop only) ──────────────────────────────
@@ -149,6 +179,34 @@ const apiDocsUrl = computed(() => {
 });
 
 /**
+ * The endpoint a client should be pointed at, with the region prefix applied.
+ *
+ * `cfg.baseUrl` is "" for the http transport when the UI is served BY the API —
+ * "same origin" is useless as something to copy into another program, so fall
+ * back to the real origin. The INTL prefix is not cosmetic: without it the
+ * request is routed to the CN gateway and charged to the wrong cluster.
+ */
+const apiBaseUrl = computed(() => {
+  const base = cfg.baseUrl || (server.value.port ? `http://127.0.0.1:${server.value.port}` : "");
+  if (!base) return "";
+  const prefix = region.value === "intl" ? "/intl" : "";
+  return `${base.replace(/\/$/, "")}${prefix}/v1`;
+});
+
+const copied = ref(false);
+
+async function copyBaseUrl(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(apiBaseUrl.value);
+    copied.value = true;
+    window.setTimeout(() => (copied.value = false), 1500);
+  } catch {
+    // Clipboard can be denied inside a webview; the URL is selectable right
+    // there, so there is nothing to recover from.
+  }
+}
+
+/**
  * Open a URL in the system browser (or a new tab on plain http). We
  * always open via the host (`vscode.env.openExternal` /
  * `shell.openExternal`) because `window.open` inside the VS Code
@@ -203,9 +261,93 @@ async function openDocs(): Promise<void> {
       </span>
     </div>
 
+    <div v-if="showAppearance" class="wb-card mb-4 p-4">
+      <div class="mb-3 text-[12.5px] font-medium">{{ t('settings.appearance') }}</div>
+      <div class="flex flex-wrap gap-4">
+        <div v-if="!hostTheme" class="min-w-[150px] flex-1">
+          <label class="wb-label">{{ t('settings.theme') }}</label>
+          <!--
+            Bound to the APPLIED theme, not to `settings.theme`. The two can
+            disagree for one round-trip (and permanently if the write fails), and
+            a control that shows the stored value while the page shows the new
+            one is worse than useless — it hides the failure instead of leaving
+            it to the error line.
+          -->
+          <select
+            class="wb-select"
+            :value="theme"
+            @change="pickTheme(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="dark">{{ t('settings.themeDark') }}</option>
+            <option value="light">{{ t('settings.themeLight') }}</option>
+          </select>
+        </div>
+        <div v-if="!hostLocale" class="min-w-[150px] flex-1">
+          <label class="wb-label">{{ t('settings.language') }}</label>
+          <select
+            class="wb-select"
+            :value="locale"
+            @change="pickLocale(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="en">{{ t('settings.languageEn') }}</option>
+            <option value="zh">{{ t('settings.languageZh') }}</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="wb-card mb-4 p-4">
+      <label class="wb-label">{{ t('settings.thinkingEffort') }}</label>
+      <div class="mb-2 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
+        {{ t('settings.thinkingHint') }}
+      </div>
+      <select
+        class="wb-select"
+        :value="settings?.thinkingEffort ?? 'auto'"
+        @change="save({ thinkingEffort: ($event.target as HTMLSelectElement).value }, t('settings.thinkingEffort'))"
+      >
+        <option v-for="effort in EFFORTS" :key="effort.value" :value="effort.value">
+          {{ t(effort.key) }}
+        </option>
+      </select>
+    </div>
+
+    <div class="wb-card mb-4 p-4">
+      <label class="wb-label">{{ t('settings.visionFallback') }}</label>
+      <div class="mb-2 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
+        {{ t('settings.visionHint', { source: visionSourceLabel }) }}
+      </div>
+      <select
+        class="wb-select"
+        :value="currentVision"
+        @change="
+          save(
+            { visionFallbackModel: ($event.target as HTMLSelectElement).value },
+            t('settings.visionFallback')
+          )
+        "
+      >
+        <option value="">{{ t('settings.visionAuto') }}</option>
+        <option v-if="visionStale" :value="currentVision">
+          {{ currentVision }} {{ t('settings.visionNotOffered') }}
+        </option>
+        <option v-for="m in visionModels" :key="m.id" :value="m.id">
+          {{ m.label }} — {{ m.id }} ({{ m.source }})
+        </option>
+      </select>
+      <div
+        v-if="visionModels.length === 0"
+        class="mt-2 text-[11.5px]"
+        :style="{ color: 'var(--wb-muted)' }"
+      >
+        {{ t('settings.visionUnavailable') }}
+      </div>
+    </div>
+
     <!--
-      API server management — desktop app only.
-      Shows port input, start/restart/stop buttons, and status/error.
+      Service + integration, as one group: how the local API is exposed, then
+      what to point a client at. They belong together — the docs card is useless
+      without a running server, and the server has no purpose without a client.
     -->
     <div v-if="isDesktop" class="wb-card mb-4 p-4">
       <div class="mb-2 text-[12.5px] font-medium">{{ t('settings.serverTitle') }}</div>
@@ -282,66 +424,26 @@ async function openDocs(): Promise<void> {
       </div>
     </div>
 
-    <div class="wb-card mb-4 p-4">
-      <label class="wb-label">{{ t('settings.thinkingEffort') }}</label>
-      <div class="mb-2 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-        {{ t('settings.thinkingHint') }}
-      </div>
-      <select
-        class="wb-select"
-        :value="settings?.thinkingEffort ?? 'auto'"
-        @change="save({ thinkingEffort: ($event.target as HTMLSelectElement).value }, t('settings.thinkingEffort'))"
-      >
-        <option v-for="effort in EFFORTS" :key="effort.value" :value="effort.value">
-          {{ t(effort.key) }}
-        </option>
-      </select>
-      <div class="mt-2 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-        {{ t('settings.thinkingHint') }}
-      </div>
-    </div>
-
-    <div class="wb-card mb-4 p-4">
-      <label class="wb-label">{{ t('settings.visionFallback') }}</label>
-      <div class="mb-2 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
-        {{ t('settings.visionHint', { source: visionSourceLabel }) }}
-      </div>
-      <select
-        class="wb-select"
-        :value="currentVision"
-        @change="
-          save(
-            { visionFallbackModel: ($event.target as HTMLSelectElement).value },
-            t('settings.visionFallback')
-          )
-        "
-      >
-        <option value="">{{ t('settings.visionAuto') }}</option>
-        <option v-if="visionStale" :value="currentVision">
-          {{ currentVision }} {{ t('settings.visionNotOffered') }}
-        </option>
-        <option v-for="m in visionModels" :key="m.id" :value="m.id">
-          {{ m.label }} — {{ m.id }} ({{ m.source }})
-        </option>
-      </select>
-      <div
-        v-if="visionModels.length === 0"
-        class="mt-2 text-[11.5px]"
-        :style="{ color: 'var(--wb-muted)' }"
-      >
-        {{ t('settings.visionUnavailable') }}
-      </div>
-    </div>
-
-    <!--
-      Quick pointer for non-extension hosts: the management window is just
-      a UI on top of an OpenAI-compatible local API. Open the docs in a
-      browser to see every route and payload.
-    -->
     <div v-if="cfg.transport !== 'vscode'" class="wb-card mb-4 p-4">
       <div class="mb-2 text-[12.5px] font-medium">{{ t('settings.apiTitle') }}</div>
       <p class="text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
         {{ t('settings.apiHint') }}
+      </p>
+      <!--
+        The resolved endpoint, with the region prefix already applied. It used
+        to live on the Accounts page, which meant the URL and the client
+        instructions were in two different places; both belong here, next to the
+        server that serves it.
+      -->
+      <div v-if="apiBaseUrl" class="mt-3 flex flex-wrap items-center gap-2">
+        <code class="wb-mono rounded px-2 py-1 text-[11.5px]"
+          :style="{ background: 'var(--wb-panel)' }">{{ apiBaseUrl }}</code>
+        <button type="button" class="wb-btn" @click="copyBaseUrl">
+          {{ copied ? t('accounts.copiedBaseUrl') : t('accounts.copyBaseUrl') }}
+        </button>
+      </div>
+      <p class="mt-2 text-[11.5px]" :style="{ color: 'var(--wb-muted)' }">
+        {{ t('settings.apiKeyHint') }}
       </p>
       <button
         type="button"
